@@ -38,13 +38,17 @@ end
 
 getgenv().HandleConnection = HandleConnection
 
+-- Removes children for which Callback returns true, then returns the one closest to the player.
+-- (Builds a new list instead of calling table.remove while looping, which skipped items.)
 getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: PVInstance) -> (boolean))
-	for i, Child in Children do
-		if Callback and not Callback(Child) then
+	local Filtered = {}
+
+	for _, Child in Children do
+		if Callback and Callback(Child) then
 			continue
 		end
 
-		table.remove(Children, i)
+		table.insert(Filtered, Child)
 	end
 
 	local Character = Player.Character
@@ -61,13 +65,11 @@ getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: P
 
 	local CurrentPosition: Vector3 = HumanoidRootPart.Position
 
-	table.sort(Children, function(a: Model, b: Model)
+	table.sort(Filtered, function(a: Model, b: Model)
 		return (a:GetPivot().Position - CurrentPosition).Magnitude < (b:GetPivot().Position - CurrentPosition).Magnitude
 	end)
 
-	local Closest = Children[1]
-
-	return Closest
+	return Filtered[1]
 end
 
 if not firesignal and getconnections then
@@ -104,16 +106,19 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/alyssagithub/Scripts/
 	]])
 end
 
--- Safely destroy prior instance if reloading
-if getgenv().Rayfield then
-	pcall(function()
-		getgenv().Rayfield:Destroy()
-	end)
+-- Close any previous window (Gen2 windows use :Unload, the old library used :Destroy)
+local OldWindow = getgenv().Window
+
+if typeof(OldWindow) == "table" and OldWindow.Unload and not OldWindow.unloaded then
+	pcall(OldWindow.Unload, OldWindow)
 end
 
--- Load Rayfield Gen2
+if typeof(getgenv().Rayfield) == "table" and getgenv().Rayfield.Destroy then
+	pcall(getgenv().Rayfield.Destroy, getgenv().Rayfield)
+end
+
 local Success, Rayfield = pcall(function()
-	return loadstring(game:HttpGet('https://sirius.menu/gen2'))()
+	return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 end)
 
 local function SendNotification(Title: string, Text: string, Duration: number?, Button1: string?, Button2: string?, Callback: BindableFunction?)
@@ -134,19 +139,20 @@ end
 
 getgenv().Rayfield = Rayfield
 
-local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
-getgenv().Flags = Flags
+local Window
+local Flags: {[string]: any} = {} -- replaced with Window.Flags once the window exists (raw values: Flags.AntiAFK is a boolean)
 
-local function Notify(Title: string, Content: string, Image: string)
-	if not Rayfield then
+-- Gen2 icons must be Roblox asset ids (numbers), so Lucide names like "heart" are ignored.
+local function Notify(Title: string, Content: string, Image: number?)
+	if not Window or Window.unloaded then
 		return
 	end
 
-	Rayfield:Notify({
-		Title = Title,
-		Content = Content,
-		Duration = 10,
-		Image = Image or "info",
+	Window:Notify({
+		title = Title,
+		content = Content,
+		duration = 10,
+		icon = if typeof(Image) == "number" then Image else nil,
 	})
 end
 
@@ -154,7 +160,7 @@ getgenv().Notify = Notify
 
 task.spawn(function()
 	while task.wait(Random.new():NextNumber(5 * 60, 10 * 60)) do
-		Notify("Enjoying this script?", "Join the discord at discord.gg/rN4FDFjhHz", "heart")
+		Notify("Enjoying this script?", "Join the discord at discord.gg/rN4FDFjhHz")
 	end
 end)
 
@@ -181,13 +187,15 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 		if Button == Button1 then
 			local OriginalFlags = {}
 
-			for i, v in Flags do
-				if typeof(v.CurrentValue) ~= "boolean" then
-					continue
-				end
+			if Window then
+				for Flag, Value in Window.Flags do
+					if typeof(Value) ~= "boolean" then
+						continue
+					end
 
-				OriginalFlags[i] = v.CurrentValue
-				v:Set(false)
+					OriginalFlags[Flag] = Value
+					Window:Set(Flag, false)
+				end
 			end
 
 			getgenv().OriginalFlags = OriginalFlags
@@ -198,16 +206,16 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 	
 	task.spawn(function()
 		while task.wait(60) do
-			local Result = game:HttpGet(File)
+			local Fetched, Result = pcall(game.HttpGet, game, File)
 
-			if not Result then
+			if not Fetched or not Result then
 				continue
 			end
 
 			Result = Result:split('getgenv().ScriptVersion = "')[2]
-			Result = Result:split('"')[1]
+			Result = Result and Result:split('"')[1]
 
-			if Result == ScriptVersion then
+			if not Result or Result == ScriptVersion then
 				continue
 			end
 
@@ -218,34 +226,32 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 	end)
 end
 
-local Window
-
-pcall(function()
+local WindowSuccess, WindowError = pcall(function()
 	Window = Rayfield:CreateWindow({
-		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
-		Icon = "snail",
-		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
-		LoadingSubtitle = PlaceName,
-		Theme = "DarkBlue",
+		name = "VMS HUB",
+		subtitle = `{PlaceName} | {ScriptVersion or "Dev Mode"}`,
+		theme = "cobalt",
+		sidebarLayout = true,
+		showName = "VMS HUB",
 
-		DisableRayfieldPrompts = false,
-		DisableBuildWarnings = false,
-
-		ConfigurationSaving = {
-			Enabled = true,
-			FolderName = "VMSHUB",
-			FileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`
-		},
-
-		Discord = {
-			Enabled = true,
-			Invite = "rN4FDFjhHz",
-			RememberJoins = true
+		configuration = {
+			autoSave = true,
+			autoLoad = true,
+			customFolder = "VMSHUB",
+			fileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`,
 		},
 	})
-	
+
+	Flags = Window.Flags
+
 	getgenv().Window = Window
+	getgenv().Flags = Flags
 end)
+
+if not WindowSuccess then
+	warn("[VMS HUB] CreateWindow failed:", WindowError)
+	SendNotification("VMS HUB UI failed", tostring(WindowError):sub(1, 150))
+end
 
 function CreateUniversalTabs()
 	local VirtualUser = game:GetService("VirtualUser")
@@ -257,17 +263,13 @@ function CreateUniversalTabs()
 		return
 	end
 	
-	-- Rayfield Gen2 Tab
-	local Tab = Window:CreateTab({
-		Name = "Client",
-		Icon = "user"
-	})
+	local Tab = Window:CreateTab({name = "Client"})
 	
-	Tab:CreateSection("Discord")
+	Tab:CreateSection({name = "Discord"})
 
 	Tab:CreateButton({
-		Name = "🐌 • Join the VMS HUB Discord!",
-		Callback = function()
+		name = "🐌 • Join the VMS HUB Discord!",
+		callback = function()
 			if request then
 				request({
 					Url = 'http://127.0.0.1:6463/rpc?v=1',
@@ -291,19 +293,18 @@ function CreateUniversalTabs()
 		end,
 	})
 
-	Tab:CreateLabel("https://discord.gg/rN4FDFjhHz", "link")
+	Tab:CreateText({text = "https://discord.gg/rN4FDFjhHz"})
 
-	Tab:CreateSection("AFK")
+	Tab:CreateSection({name = "AFK"})
 
 	Tab:CreateToggle({
-		Name = "🔒 • Anti AFK Disconnection",
-		CurrentValue = true,
-		Flag = "AntiAFK",
-		Callback = function()end,
+		name = "🔒 • Anti AFK Disconnection",
+		value = true,
+		flag = "AntiAFK",
 	})
 	
 	getgenv().HandleConnection(Player.Idled:Connect(function()
-		if not Flags.AntiAFK.CurrentValue then
+		if not Flags.AntiAFK then
 			return
 		end
 
@@ -313,16 +314,16 @@ function CreateUniversalTabs()
 		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightMeta, false, game)
 	end), "AntiAFK")
 	
-	Tab:CreateSection("Performance")
+	Tab:CreateSection({name = "Performance"})
 	
 	Tab:CreateSlider({
-		Name = ApplyUnsupportedName("🎮 • Max FPS (0 for Unlimited)", setfpscap),
-		Range = {0, 240},
-		Increment = 1,
-		Suffix = "FPS",
-		CurrentValue = 0,
-		Flag = "FPS",
-		Callback = function(Value)
+		name = ApplyUnsupportedName("🎮 • Max FPS (0 for Unlimited)", setfpscap),
+		range = {0, 240},
+		increment = 1,
+		suffix = "FPS",
+		value = 0,
+		flag = "FPS",
+		callback = function(Value)
 			if not setfpscap then
 				return
 			end
@@ -332,40 +333,51 @@ function CreateUniversalTabs()
 	})
 	
 	local PreviousValue
+	local RenderLoopId = 0
 	
 	Tab:CreateToggle({
-		Name = ApplyUnsupportedName("⬜ • Disable 3D Rendering When Tabbed Out", isrbxactive),
-		CurrentValue = false,
-		Flag = "Rendering",
-		Callback = function(Value)
-			while Flags.Rendering.CurrentValue and task.wait() do
-				local CurrentValue = isrbxactive()
-				
-				if PreviousValue == CurrentValue then
-					continue
-				end
-				
-				PreviousValue = CurrentValue
-				
-				RunService:Set3dRenderingEnabled(CurrentValue)
-			end
-			
-			if Value then
+		name = ApplyUnsupportedName("⬜ • Disable 3D Rendering When Tabbed Out", isrbxactive),
+		value = false,
+		flag = "Rendering",
+		callback = function(Value)
+			RenderLoopId += 1
+			local ThisLoop = RenderLoopId
+
+			if not Value or not isrbxactive then
 				RunService:Set3dRenderingEnabled(true)
+				return
 			end
+
+			task.spawn(function()
+				while RenderLoopId == ThisLoop and task.wait() do
+					local CurrentValue = isrbxactive()
+					
+					if PreviousValue == CurrentValue then
+						continue
+					end
+					
+					PreviousValue = CurrentValue
+					
+					RunService:Set3dRenderingEnabled(CurrentValue)
+				end
+
+				if RenderLoopId ~= ThisLoop and not Flags.Rendering then
+					RunService:Set3dRenderingEnabled(true)
+				end
+			end)
 		end,
 	})
 	
-	Tab:CreateSection("Properties")
+	Tab:CreateSection({name = "Properties"})
 	
 	Tab:CreateSlider({
-		Name = "💨 • Set WalkSpeed",
-		Range = {0, 300},
-		Increment = 1,
-		Suffix = "Studs/s",
-		CurrentValue = game:GetService("StarterPlayer").CharacterWalkSpeed,
-		Flag = "WalkSpeed",
-		Callback = function(Value)
+		name = "💨 • Set WalkSpeed",
+		range = {0, 300},
+		increment = 1,
+		suffix = "Studs/s",
+		value = game:GetService("StarterPlayer").CharacterWalkSpeed,
+		flag = "WalkSpeed",
+		callback = function(Value)
 			local Character = Player.Character or Player.CharacterAdded:Wait()
 			
 			if not Character then
@@ -382,7 +394,7 @@ function CreateUniversalTabs()
 		end,
 	})
 	
-	Tab:CreateSection("Safety")
+	Tab:CreateSection({name = "Safety"})
 	
 	local StaffRoleNames = {
 		"mod",
@@ -419,7 +431,7 @@ function CreateUniversalTabs()
 		end
 
 		if game.CreatorType ~= Enum.CreatorType.Group then
-			return
+			return StaffRole -- previously returned nil here, which discarded the Roblox Admin result
 		end
 
 		local CreatorId = game.CreatorId
@@ -440,7 +452,7 @@ function CreateUniversalTabs()
 	end
 	
 	local function CheckIfStaff(CheckPlayer: Player)
-		if not Flags.StaffJoin.CurrentValue then
+		if not Flags.StaffJoin then
 			return
 		end
 		
@@ -454,10 +466,10 @@ function CreateUniversalTabs()
 	end
 	
 	Tab:CreateToggle({
-		Name = "🚪 • Auto Leave When Staff Joins",
-		CurrentValue = false,
-		Flag = "StaffJoin",
-		Callback = function(Value)
+		name = "🚪 • Auto Leave When Staff Joins",
+		value = false,
+		flag = "StaffJoin",
+		callback = function(Value)
 			if not Value then
 				return
 			end
@@ -473,10 +485,11 @@ function CreateUniversalTabs()
 	getgenv().Role = GetStaffRole(Player)
 	
 	local Connections = {}
+	
 	local OriginalText = {}
 
 	local function HandleUsernameChange(Object: Instance)
-		if not Flags.HideName.CurrentValue then
+		if not Flags.HideName then
 			return
 		end
 
@@ -484,11 +497,13 @@ function CreateUniversalTabs()
 			return
 		end
 
-		local NameReplacement = Flags.NameReplacement.CurrentValue
+		local NameReplacement = Flags.NameReplacement or "VMS HUB"
 
 		if not Connections[Object] then
 			Connections[Object] = true
-			Object:GetPropertyChangedSignal("Text"):Connect(HandleUsernameChange)
+			Object:GetPropertyChangedSignal("Text"):Connect(function()
+				HandleUsernameChange(Object)
+			end)
 		end
 
 		if Object.Text:find(Player.Name) then
@@ -503,12 +518,12 @@ function CreateUniversalTabs()
 	local DescendantAddedConnection
 	
 	Tab:CreateToggle({
-		Name = "🛡 • Hide Username and Display Name (Client-Sided)",
-		CurrentValue = false,
-		Flag = "HideName",
-		Callback = function(Value)
+		name = "🛡 • Hide Username and Display Name (Client-Sided)",
+		value = false,
+		flag = "HideName",
+		callback = function(Value)
 			if Value and not DescendantAddedConnection then
-				for i, v in game:GetDescendants() do
+				for i,v in game:GetDescendants() do
 					HandleUsernameChange(v)
 				end
 				
@@ -529,103 +544,48 @@ function CreateUniversalTabs()
 	})
 	
 	Tab:CreateInput({
-		Name = "💬 • Name To Replace With",
-		CurrentValue = "VMS HUB",
-		PlaceholderText = "New Name Here",
-		RemoveTextAfterFocusLost = false,
-		Flag = "NameReplacement",
-		Callback = function()end,
+		name = "💬 • Name To Replace With",
+		value = "VMS HUB",
+		placeholder = "New Name Here",
+		flag = "NameReplacement",
 	})
 	
-	Tab:CreateSection("UI")
-	
-	local CustomThemes = {
-		BlackHistoryMonth = {
-			TextColor = Color3.fromRGB(255, 255, 255),
-			Background = Color3.fromRGB(20, 20, 20),
-			Topbar = Color3.fromRGB(25, 25, 25),
-			Shadow = Color3.fromRGB(10, 10, 10),
-
-			NotificationBackground = Color3.fromRGB(25, 25, 25),
-			NotificationActionsBackground = Color3.fromRGB(35, 35, 35),
-
-			TabBackground = Color3.fromRGB(25, 25, 25),
-			TabStroke = Color3.fromRGB(40, 40, 40),
-			TabBackgroundSelected = Color3.fromRGB(45, 45, 45),
-			TabTextColor = Color3.fromRGB(180, 180, 180),
-			SelectedTabTextColor = Color3.fromRGB(255, 255, 255),
-
-			ElementBackground = Color3.fromRGB(25, 25, 25),
-			ElementBackgroundHover = Color3.fromRGB(35, 35, 35),
-			SecondaryElementBackground = Color3.fromRGB(20, 20, 20),
-			ElementStroke = Color3.fromRGB(40, 40, 40),
-			SecondaryElementStroke = Color3.fromRGB(35, 35, 35),
-
-			SliderBackground = Color3.fromRGB(35, 35, 35),
-			SliderProgress = Color3.fromRGB(80, 80, 80),
-			SliderStroke = Color3.fromRGB(50, 50, 50),
-
-			ToggleBackground = Color3.fromRGB(30, 30, 30),
-			ToggleEnabled = Color3.fromRGB(200, 200, 200),
-			ToggleDisabled = Color3.fromRGB(60, 60, 60),
-			ToggleEnabledStroke = Color3.fromRGB(150, 150, 150),
-			ToggleDisabledStroke = Color3.fromRGB(45, 45, 45),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(40, 40, 40),
-
-			DropdownSelected = Color3.fromRGB(45, 45, 45),
-			DropdownUnselected = Color3.fromRGB(30, 30, 30),
-
-			InputBackground = Color3.fromRGB(25, 25, 25),
-			InputStroke = Color3.fromRGB(40, 40, 40),
-			PlaceholderColor = Color3.fromRGB(120, 120, 120)
-		},
-		Default = "DarkBlue",
-		Dark = "Default"
-	}
+	Tab:CreateSection({name = "UI"})
 	
 	Tab:CreateDropdown({
-		Name = "🖼 • Change Theme",
-		Options = {"BlackHistoryMonth", "Default", "Dark", "AmberGlow", "Amethyst", "Ocean", "Light", "Bloom", "Green", "Serenity"},
-		MultipleOptions = false,
-		Flag = "Theme",
-		Callback = function(CurrentOption)
-			local selectedTheme = typeof(CurrentOption) == "table" and CurrentOption[1] or CurrentOption
-
-			if not selectedTheme or selectedTheme == "" then
+		name = "🖼 • Change Theme",
+		options = {"Cobalt", "Default", "Ember", "Amethyst", "Frost", "Rose"},
+		value = "Cobalt",
+		flag = "Theme",
+		callback = function(Selected)
+			if not Selected or Selected == "" then
 				return
 			end
-			
-			Window:ModifyTheme(CustomThemes[selectedTheme] or selectedTheme)
+
+			Window:ChangeTheme(Selected:lower())
 		end,
 	})
 
-	Tab:CreateSection("Development")
+	Tab:CreateSection({name = "Development"})
 
 	Tab:CreateButton({
-		Name = "⚙️ • Rejoin",
-		Callback = function()
+		name = "⚙️ • Rejoin",
+		callback = function()
 			TeleportService:Teleport(game.PlaceId, Player, {FrostByteRejoin = true})
 		end,
 	})
-	
-	Rayfield:LoadConfiguration()
+
+	-- Gen2 restores saved values itself (autoLoad), so there is no LoadConfiguration() call anymore.
 	
 	local OriginalFlags = getgenv().OriginalFlags
 	
 	if OriginalFlags then
-		for Name: string, Flag in Flags do
-			local Value = OriginalFlags[Name]
-			
-			if Value == nil then
-				continue
-			end
-			
-			Flag:Set(Value)
+		for Name: string, Value in OriginalFlags do
+			Window:Set(Name, Value)
 		end
 	end
 	
-	Notify("Welcome to VMS HUB", `Loaded in {math.floor((tick() - StartLoadTime) * 10) / 10}s`, "loader-circle")
+	Notify("Welcome to VMS HUB", `Loaded in {math.floor((tick() - StartLoadTime) * 10) / 10}s`)
 	
 	local FrostByteStarted = getgenv().FrostByteStarted
 	
