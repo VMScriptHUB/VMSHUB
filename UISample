@@ -22,11 +22,49 @@ local firesignal: (RBXScriptSignal) -> () = getfenv().firesignal
 
 local ScriptVersion = getgenv().ScriptVersion
 
-getgenv().gethui = function()
-	return game:GetService("CoreGui")
+-- Containers to search for Rayfield UI
+local searchContainers = {
+	(typeof(gethui) == "function" and gethui()),
+	game:GetService("CoreGui"),
+	Player:FindFirstChildOfClass("PlayerGui")
+}
+
+------------- /////// ANTI-STACK CLEANUP \\\\\\\ -------------
+-- 1. Destroy explicitly stored ScreenGui from previous execution
+if getgenv().VMSHubScreenGui then
+	pcall(function()
+		getgenv().VMSHubScreenGui:Destroy()
+	end)
+	getgenv().VMSHubScreenGui = nil
 end
 
-getgenv().FrostByteConnections = getgenv().FrostByteConnections or {}
+-- 2. Scan containers for any previous VMS HUB or Rayfield windows
+for _, container in ipairs(searchContainers) do
+	if container then
+		for _, child in ipairs(container:GetChildren()) do
+			if child:IsA("ScreenGui") then
+				if child.Name == "Rayfield" or child.Name:find("Rayfield") then
+					pcall(function() child:Destroy() end)
+				else
+					for _, desc in ipairs(child:GetDescendants()) do
+						if desc:IsA("TextLabel") and desc.Text:find("VMS HUB") then
+							pcall(function() child:Destroy() end)
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+-- 3. Disconnect previous connections
+if getgenv().FrostByteConnections then
+	for _, connection in pairs(getgenv().FrostByteConnections) do
+		pcall(function() connection:Disconnect() end)
+	end
+end
+getgenv().FrostByteConnections = {}
 
 local function HandleConnection(Connection: RBXScriptConnection, Name: string)
 	if getgenv().FrostByteConnections[Name] then
@@ -104,31 +142,6 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/alyssagithub/Scripts/
 	]])
 end
 
--- Safely cleanup any previous Rayfield instance
-if getgenv().Window and typeof(getgenv().Window.Destroy) == "function" then
-	pcall(function()
-		getgenv().Window:Destroy()
-	end)
-end
-
-if getgenv().Rayfield and typeof(getgenv().Rayfield.Destroy) == "function" then
-	pcall(function()
-		getgenv().Rayfield:Destroy()
-	end)
-end
-
-local GuiContainer = (getgenv().gethui and getgenv().gethui()) or game:GetService("CoreGui")
-if GuiContainer then
-	for _, Gui in GuiContainer:GetChildren() do
-		if Gui.Name == "Rayfield" or Gui.Name:find("Rayfield") then
-			Gui:Destroy()
-		end
-	end
-end
-
-getgenv().Rayfield = nil
-getgenv().Window = nil
-
 -- Load Rayfield Gen2
 local Success, Rayfield = pcall(function()
 	return loadstring(game:HttpGet('https://sirius.menu/gen2'))()
@@ -154,7 +167,6 @@ getgenv().Rayfield = Rayfield
 
 local Window
 
--- Rayfield Gen2: Notification handler (called on Window)
 local function Notify(Title: string, Content: string, ImageOrDuration: any, Duration: number?)
 	local duration = (typeof(ImageOrDuration) == "number" and ImageOrDuration) or Duration or 10
 	local image = (typeof(ImageOrDuration) == "string" and ImageOrDuration) or "info"
@@ -185,7 +197,6 @@ end
 
 getgenv().Notify = Notify
 
--- Compatibility layer for Flags: seamlessly maps Flags.Key.CurrentValue <-> Window.Flags[Key]
 local Flags = setmetatable({}, {
 	__index = function(_, key)
 		local win = Window or getgenv().Window
@@ -298,6 +309,16 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 	end)
 end
 
+-- Snapshot GUIs before creating new window
+local existingGuis = {}
+for _, container in ipairs(searchContainers) do
+	if container then
+		for _, child in ipairs(container:GetChildren()) do
+			existingGuis[child] = true
+		end
+	end
+end
+
 pcall(function()
 	Window = Rayfield:CreateWindow({
 		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
@@ -305,8 +326,6 @@ pcall(function()
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
 		Theme = "Cobalt",
-
-		-- Enable Sidebar Layout (both cases for 100% compatibility)
 		sidebarLayout = true,
 		SidebarLayout = true,
 
@@ -329,6 +348,19 @@ pcall(function()
 	getgenv().Window = Window
 end)
 
+-- Detect the new ScreenGui instance created by Rayfield Gen2 and store it
+for _, container in ipairs(searchContainers) do
+	if container then
+		for _, child in ipairs(container:GetChildren()) do
+			if not existingGuis[child] and child:IsA("ScreenGui") then
+				getgenv().VMSHubScreenGui = child
+				break
+			end
+		end
+	end
+	if getgenv().VMSHubScreenGui then break end
+end
+
 function CreateUniversalTabs()
 	local VirtualUser = game:GetService("VirtualUser")
 	local VirtualInputManager = game:GetService("VirtualInputManager")
@@ -339,7 +371,6 @@ function CreateUniversalTabs()
 		return
 	end
 	
-	-- Rayfield Gen2: CreateTab table syntax
 	local Tab = Window:CreateTab({
 		Name = "Client",
 		Icon = "user"
@@ -681,7 +712,6 @@ function CreateUniversalTabs()
 			end
 			
 			local theme = CustomThemes[selectedTheme] or selectedTheme
-			-- Rayfield Gen2 uses ChangeTheme
 			if Window and typeof(Window.ChangeTheme) == "function" then
 				Window:ChangeTheme(theme)
 			elseif Window and typeof(Window.ModifyTheme) == "function" then
@@ -699,7 +729,6 @@ function CreateUniversalTabs()
 		end,
 	})
 	
-	-- Gen2 config is automatic; safely attempt only if function exists
 	if Window and typeof(Window.LoadConfiguration) == "function" then
 		pcall(function() Window:LoadConfiguration() end)
 	elseif Rayfield and typeof(Rayfield.LoadConfiguration) == "function" then
