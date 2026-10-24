@@ -1,486 +1,364 @@
 --[[
-	FrostByteUI.lua
-	Rayfield-compatible wrapper over Fluent (left sidebar tabs, modern look).
-	Supports: CreateWindow, CreateTab, CreateSection, CreateLabel, CreateParagraph,
-	CreateButton, CreateToggle, CreateSlider, CreateInput, CreateDropdown,
-	CreateKeybind, CreateColorPicker, Notify, Flags, LoadConfiguration, Destroy.
+	FrostByteUI_Gen2.lua
+	Lets scripts written for the old Rayfield (2022) API run on Rayfield Gen2
+	with the sidebar layout (tabs on the left).
+
+	Old API in  -> Gen2 out. Your existing code keeps using:
+	Window:CreateTab, Tab:CreateSection/Label/Paragraph/Button/Toggle/Slider/Input/
+	Dropdown/Keybind, Rayfield:Notify, Rayfield.Flags (.CurrentValue / .CurrentOption / :Set),
+	Rayfield:LoadConfiguration, Rayfield:Destroy, Window.ModifyTheme.
+
+	Not shimmed: ColorPicker (use Gen2's tab:CreateColorPicker directly if you need it).
 ]]
 
-local FLUENT_URL = "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
+local GEN2_URL = "https://sirius.menu/gen2"
 
-local HttpService = game:GetService("HttpService")
-local env = getfenv()
-
-local isfile, readfile, writefile = env.isfile, env.readfile, env.writefile
-local isfolder, makefolder = env.isfolder, env.makefolder
-
-local ok, Fluent = pcall(function()
-	return loadstring(game:HttpGet(FLUENT_URL))()
+local Success, Gen2 = pcall(function()
+	return loadstring(game:HttpGet(GEN2_URL))()
 end)
 
-if not ok or typeof(Fluent) ~= "table" then
+if not Success or typeof(Gen2) ~= "table" or not Gen2.CreateWindow then
 	return nil
 end
 
-local Rayfield = {Flags = {}}
-local Flags = Rayfield.Flags
+local Shim = {Flags = {}}
+local Flags = Shim.Flags
 
-local SaveEnabled, SaveFolder, SaveName = false, "FrostByte", "Config"
-local Suppress = false
-local SaveQueued = false
+local RealWindow
+local Registry = {}
 local Counter = 0
-local WindowObject
 
 local ThemeMap = {
-	Default = "Dark",
-	Dark = "Darker",
-	Light = "Light",
-	Ocean = "Aqua",
-	Amethyst = "Amethyst",
-	Bloom = "Rose",
-	AmberGlow = "Dark",
-	Green = "Aqua",
-	Serenity = "Aqua",
-	DarkBlue = "Dark",
+	Default = "default",
+	DarkBlue = "cobalt",
+	Ocean = "cobalt",
+	AmberGlow = "ember",
+	Amethyst = "amethyst",
+	Bloom = "rose",
+	Light = "frost",
+	Serenity = "frost",
+	Dark = "default",
+	Green = "default",
 }
+
+-- Gen2 only accepts asset ids / rbx* strings as icons. Lucide names from the old API are dropped.
+local function Icon(Value)
+	if typeof(Value) == "number" and Value ~= 0 then
+		return Value
+	end
+
+	if typeof(Value) == "string" and Value:match("^rbx") then
+		return Value
+	end
+
+	return nil
+end
 
 local function SafeCall(Callback, ...)
 	if typeof(Callback) ~= "function" then
 		return
 	end
 
-	local Success, Err = pcall(Callback, ...)
+	local Ok, Err = pcall(Callback, ...)
 
-	if not Success then
+	if not Ok then
 		warn("[FrostByteUI] callback error:", Err)
 	end
 end
 
-local function NewFlag(Name, Entry)
+local function UniqueFlag(Name)
 	Counter += 1
-
 	Name = Name or ("Unnamed" .. Counter)
 
 	if Flags[Name] then
-		Name = Name .. "_" .. Counter -- duplicate flag names would overwrite each other
+		Name = `{Name}_{Counter}`
 	end
-
-	Flags[Name] = Entry
-	Entry.Name = Name
 
 	return Name
 end
 
--- Saving / loading --------------------------------------------------------
+-- Builds the old-style flag object: Flags.X.CurrentValue / .CurrentOption / :Set()
+local function RegisterFlag(Flag, Entry)
+	Registry[#Registry + 1] = Entry
 
-local function GetPath()
-	return `{SaveFolder}/{SaveName}.json`
-end
+	Flags[Flag] = setmetatable({}, {
+		__index = function(_, Key)
+			local Handle = Entry.Handle
 
-local function Encode(Entry)
-	if Entry.Type == "Dropdown" then
-		return Entry.CurrentOption
-	elseif Entry.Type == "Keybind" then
-		return Entry.CurrentKeybind
-	elseif Entry.Type == "Color" then
-		return Entry.CurrentValue:ToHex()
-	end
+			if Key == "CurrentValue" then
+				return if Handle then Handle.value else Entry.Initial
+			elseif Key == "CurrentOption" then
+				return if Handle then Handle.value else Entry.Initial
+			elseif Key == "CurrentKeybind" then
+				local Value = Handle and Handle.value or Entry.Initial
+				return if typeof(Value) == "EnumItem" then Value.Name else tostring(Value)
+			elseif Key == "Set" then
+				return function(_, Value)
+					if Entry.Handle then
+						Entry.Set(Value)
+					end
+				end
+			elseif Key == "Refresh" then
+				return function(_, Options)
+					if Entry.Handle and Entry.Handle.Refresh then
+						Entry.Handle:Refresh(Options)
+					end
+				end
+			end
 
-	return Entry.CurrentValue
-end
-
-local function Save()
-	SaveQueued = false
-
-	if not SaveEnabled or not writefile then
-		return
-	end
-
-	local Data = {}
-
-	for Name, Entry in Flags do
-		Data[Name] = Encode(Entry)
-	end
-
-	pcall(function()
-		if makefolder and isfolder and not isfolder(SaveFolder) then
-			makefolder(SaveFolder)
-		end
-
-		writefile(GetPath(), HttpService:JSONEncode(Data))
-	end)
-end
-
-local function QueueSave()
-	if SaveQueued or not SaveEnabled then
-		return
-	end
-
-	SaveQueued = true
-	task.delay(1, Save)
-end
-
-local function Read()
-	if not SaveEnabled or not isfile or not readfile then
-		return
-	end
-
-	local Success, Data = pcall(function()
-		if not isfile(GetPath()) then
-			return
-		end
-
-		return HttpService:JSONDecode(readfile(GetPath()))
-	end)
-
-	return Success and Data or nil
-end
-
--- Notifications / lifecycle -----------------------------------------------
-
-function Rayfield:Notify(Options)
-	Fluent:Notify({
-		Title = Options.Title or "Notification",
-		Content = Options.Content or "",
-		Duration = Options.Duration or 6,
+			return nil
+		end,
 	})
 end
 
-function Rayfield:Destroy()
-	pcall(function()
-		Fluent:Destroy()
-	end)
-end
-
-function Rayfield:LoadConfiguration()
-	local Data = Read()
-
-	for Name, Entry in Flags do
-		local Saved = Data and Data[Name]
-
-		if Saved ~= nil then
-			Suppress = true
-			pcall(Entry.Set, Entry, Saved)
-			Suppress = false
-		end
-
-		if Entry.Callback and Entry.Type ~= "Keybind" then
-			local Value = if Entry.Type == "Dropdown" then Entry.CurrentOption else Entry.CurrentValue
-			task.spawn(SafeCall, Entry.Callback, Value)
-		end
-	end
-
-	if WindowObject and WindowObject._first then
-		pcall(function()
-			WindowObject._fluent:SelectTab(1)
-		end)
+local function Wrap(Entry, Callback)
+	return function(...)
+		Entry.Fired = true
+		task.spawn(SafeCall, Callback, ...)
 	end
 end
 
--- Window --------------------------------------------------------------------
+-- Tabs ----------------------------------------------------------------------
 
-local TabClass = {}
-TabClass.__index = TabClass
+local Tab = {}
+Tab.__index = Tab
 
-function TabClass:CreateSection(Name)
-	self._tab:AddSection(Name)
+function Tab:CreateSection(Name)
+	self._tab:CreateSection({name = Name})
 end
 
-function TabClass:CreateLabel(Text)
-	local Element = self._tab:AddParagraph({Title = Text, Content = ""})
+function Tab:CreateLabel(Text, IconValue)
+	local Handle = self._tab:CreateText({name = Text, icon = Icon(IconValue)})
 
 	return {
 		Set = function(_, NewText)
-			if Element.SetTitle then
-				Element:SetTitle(NewText)
+			if Handle and Handle.SetTitle then
+				Handle:SetTitle(NewText)
 			end
 		end,
 	}
 end
 
-function TabClass:CreateParagraph(Options)
-	return self._tab:AddParagraph({
-		Title = Options.Title or "",
-		Content = Options.Content or "",
+function Tab:CreateParagraph(Options)
+	return self._tab:CreateText({
+		name = Options.Title,
+		text = Options.Content,
 	})
 end
 
-function TabClass:CreateButton(Options)
-	self._tab:AddButton({
-		Title = Options.Name,
-		Description = Options.Description,
-		Callback = function()
-			SafeCall(Options.Callback)
+function Tab:CreateDivider()
+	if self._tab.CreateDivider then
+		self._tab:CreateDivider()
+	end
+end
+
+function Tab:CreateButton(Options)
+	return self._tab:CreateButton({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		icon = Icon(Options.Icon),
+		callback = function()
+			task.spawn(SafeCall, Options.Callback)
 		end,
 	})
 end
 
-function TabClass:CreateToggle(Options)
-	local Entry = {Type = "Toggle", CurrentValue = Options.CurrentValue or false, Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
+function Tab:CreateToggle(Options)
+	local Flag = UniqueFlag(Options.Flag)
+	local Entry = {Initial = Options.CurrentValue or false}
 
-	local Element = self._tab:AddToggle(Flag, {
-		Title = Options.Name,
-		Description = Options.Description,
-		Default = Entry.CurrentValue,
+	Entry.Handle = self._tab:CreateToggle({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		flag = Flag,
+		value = Entry.Initial,
+		callback = Wrap(Entry, Options.Callback),
 	})
 
-	Element:OnChanged(function(Value)
-		Entry.CurrentValue = Value
-		QueueSave()
-
-		if not Suppress then
-			task.spawn(SafeCall, Options.Callback, Value)
-		end
-	end)
-
-	function Entry:Set(Value)
-		Element:SetValue(Value)
+	Entry.Set = function(Value)
+		Entry.Handle:Set(Value)
 	end
 
-	return Entry
+	Entry.Fire = function()
+		Wrap(Entry, Options.Callback)(Entry.Handle.value)
+	end
+
+	RegisterFlag(Flag, Entry)
+
+	return Flags[Flag]
 end
 
-function TabClass:CreateSlider(Options)
+function Tab:CreateSlider(Options)
 	local Range = Options.Range or {0, 100}
-	local Increment = Options.Increment or 1
-	local Rounding = if Increment >= 1 then 0 else math.max(0, math.ceil(-math.log10(Increment)))
+	local Flag = UniqueFlag(Options.Flag)
+	local Entry = {Initial = Options.CurrentValue or Range[1]}
 
-	local Entry = {Type = "Slider", CurrentValue = Options.CurrentValue or Range[1], Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
-
-	local Element = self._tab:AddSlider(Flag, {
-		Title = Options.Name,
-		Description = Options.Suffix and `Unit: {Options.Suffix}` or Options.Description,
-		Default = Entry.CurrentValue,
-		Min = Range[1],
-		Max = Range[2],
-		Rounding = Rounding,
-	})
-
-	Element:OnChanged(function(Value)
-		Entry.CurrentValue = Value
-		QueueSave()
-
-		if not Suppress then
+	Entry.Handle = self._tab:CreateSlider({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		flag = Flag,
+		range = Range,
+		increment = Options.Increment or 1,
+		suffix = Options.Suffix,
+		value = Entry.Initial,
+		callback = function(Value)
+			Entry.Fired = true
 			task.spawn(SafeCall, Options.Callback, Value)
-		end
-	end)
-
-	function Entry:Set(Value)
-		Element:SetValue(Value)
-	end
-
-	return Entry
-end
-
-function TabClass:CreateInput(Options)
-	local Entry = {Type = "Input", CurrentValue = Options.CurrentValue or "", Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
-
-	local Element = self._tab:AddInput(Flag, {
-		Title = Options.Name,
-		Description = Options.Description,
-		Default = Entry.CurrentValue,
-		Placeholder = Options.PlaceholderText or "",
-		Numeric = false,
-		Finished = false,
-	})
-
-	Element:OnChanged(function(Value)
-		Entry.CurrentValue = Value
-		QueueSave()
-
-		if not Suppress then
-			task.spawn(SafeCall, Options.Callback, Value)
-		end
-	end)
-
-	function Entry:Set(Value)
-		Element:SetValue(Value)
-	end
-
-	return Entry
-end
-
-function TabClass:CreateDropdown(Options)
-	local Multi = Options.MultipleOptions or false
-	local Values = Options.Options or {}
-
-	local Initial = Options.CurrentOption
-	if typeof(Initial) == "string" then
-		Initial = {Initial}
-	end
-	Initial = Initial or {}
-
-	local Entry = {Type = "Dropdown", CurrentOption = Initial, Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
-
-	local Default
-	if Multi then
-		Default = {}
-		for _, Name in Initial do
-			Default[Name] = true
-		end
-	else
-		Default = table.find(Values, Initial[1])
-	end
-
-	local Element = self._tab:AddDropdown(Flag, {
-		Title = Options.Name,
-		Description = Options.Description,
-		Values = Values,
-		Multi = Multi,
-		Default = Default,
-	})
-
-	Element:OnChanged(function(Value)
-		local List = {}
-
-		if Multi then
-			for Name, Enabled in Value do
-				if Enabled then
-					table.insert(List, Name)
-				end
-			end
-		elseif Value then
-			List = {Value}
-		end
-
-		Entry.CurrentOption = List
-		QueueSave()
-
-		if not Suppress then
-			task.spawn(SafeCall, Options.Callback, List)
-		end
-	end)
-
-	function Entry:Set(NewOptions)
-		if typeof(NewOptions) == "string" then
-			NewOptions = {NewOptions}
-		end
-
-		if Multi then
-			local Map = {}
-			for _, Name in NewOptions do
-				Map[Name] = true
-			end
-			Element:SetValue(Map)
-		else
-			Element:SetValue(NewOptions[1])
-		end
-	end
-
-	function Entry:Refresh(NewValues)
-		Element:SetValues(NewValues)
-	end
-
-	return Entry
-end
-
-function TabClass:CreateKeybind(Options)
-	local Entry = {Type = "Keybind", CurrentKeybind = Options.CurrentKeybind or "E", Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
-
-	local Element = self._tab:AddKeybind(Flag, {
-		Title = Options.Name,
-		Description = Options.Description,
-		Mode = Options.HoldToInteract and "Hold" or "Toggle",
-		Default = Entry.CurrentKeybind,
-		Callback = function(Value)
-			if not Suppress then
-				task.spawn(SafeCall, Options.Callback, Value)
-			end
-		end,
-		ChangedCallback = function(New)
-			Entry.CurrentKeybind = tostring(New.Name or New)
-			QueueSave()
 		end,
 	})
 
-	function Entry:Set(Key)
-		Element:SetValue(Key, Options.HoldToInteract and "Hold" or "Toggle")
+	Entry.Set = function(Value)
+		Entry.Handle:Set(Value)
 	end
 
-	return Entry
+	Entry.Fire = function()
+		Entry.Fired = true
+		task.spawn(SafeCall, Options.Callback, Entry.Handle.value)
+	end
+
+	RegisterFlag(Flag, Entry)
+
+	return Flags[Flag]
 end
 
-function TabClass:CreateColorPicker(Options)
-	local Entry = {Type = "Color", CurrentValue = Options.Color or Color3.new(1, 1, 1), Callback = Options.Callback}
-	local Flag = NewFlag(Options.Flag, Entry)
+function Tab:CreateInput(Options)
+	local Flag = UniqueFlag(Options.Flag)
+	local Entry = {Initial = Options.CurrentValue or ""}
 
-	local Element = self._tab:AddColorpicker(Flag, {
-		Title = Options.Name,
-		Description = Options.Description,
-		Default = Entry.CurrentValue,
+	Entry.Handle = self._tab:CreateInput({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		flag = Flag,
+		value = Entry.Initial,
+		placeholder = Options.PlaceholderText,
+		callback = Wrap(Entry, Options.Callback),
 	})
 
-	Element:OnChanged(function(Value)
-		Entry.CurrentValue = Value
-		QueueSave()
-
-		if not Suppress then
-			task.spawn(SafeCall, Options.Callback, Value)
-		end
-	end)
-
-	function Entry:Set(Value)
-		if typeof(Value) == "string" then
-			Value = Color3.fromHex(Value)
-		end
-		Element:SetValue(Value)
+	Entry.Set = function(Value)
+		Entry.Handle:Set(Value)
 	end
 
-	return Entry
-end
-
--- Rayfield used CreateColorPicker / CreateColorpicker inconsistently
-TabClass.CreateColorpicker = TabClass.CreateColorPicker
-
-local WindowClass = {}
-WindowClass.__index = WindowClass
-
-function WindowClass:CreateTab(Name, Icon)
-	local Tab
-
-	local Success = pcall(function()
-		Tab = self._fluent:AddTab({Title = Name, Icon = Icon or ""})
-	end)
-
-	if not Success or not Tab then
-		Tab = self._fluent:AddTab({Title = Name, Icon = ""})
+	Entry.Fire = function()
+		Wrap(Entry, Options.Callback)(Entry.Handle.value)
 	end
 
-	self._first = true
+	RegisterFlag(Flag, Entry)
 
-	return setmetatable({_tab = Tab}, TabClass)
+	return Flags[Flag]
 end
 
-function Rayfield:CreateWindow(Settings)
+function Tab:CreateDropdown(Options)
+	local Multi = Options.MultipleOptions or Options.MultiSelection or false
+	local Flag = UniqueFlag(Options.Flag)
+
+	local Selected = Options.CurrentOption
+	if typeof(Selected) == "string" then
+		Selected = {Selected}
+	end
+	Selected = Selected or {}
+
+	local Entry = {Initial = Selected}
+
+	local function ToList(Value)
+		if typeof(Value) == "table" then
+			return Value
+		end
+
+		return if Value == nil then {} else {Value}
+	end
+
+	Entry.Handle = self._tab:CreateDropdown({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		flag = Flag,
+		options = Options.Options or {},
+		multiSelect = Multi,
+		value = if Multi then Selected else Selected[1],
+		callback = function(Value)
+			Entry.Fired = true
+			task.spawn(SafeCall, Options.Callback, ToList(Value)) -- old API always gave a table
+		end,
+	})
+
+	Entry.Set = function(Value)
+		local List = ToList(Value)
+		Entry.Handle:Set(if Multi then List else List[1])
+	end
+
+	Entry.Fire = function()
+		Entry.Fired = true
+		task.spawn(SafeCall, Options.Callback, ToList(Entry.Handle.value))
+	end
+
+	RegisterFlag(Flag, Entry)
+
+	return Flags[Flag]
+end
+
+function Tab:CreateKeybind(Options)
+	local Flag = UniqueFlag(Options.Flag)
+	local Entry = {Initial = Options.CurrentKeybind or "E"}
+
+	Entry.Handle = self._tab:CreateKeybind({
+		name = Options.Name,
+		description = Options.Description or Options.Info,
+		flag = Flag,
+		value = Entry.Initial,
+		hold = Options.HoldToInteract or false,
+		callback = function(...)
+			task.spawn(SafeCall, Options.Callback, ...)
+		end,
+	})
+
+	Entry.Set = function(Value)
+		Entry.Handle:Set(Value)
+	end
+
+	RegisterFlag(Flag, Entry) -- keybinds have no Fire: pressing is the trigger
+
+	return Flags[Flag]
+end
+
+-- Window --------------------------------------------------------------------
+
+local Window = {}
+Window.__index = Window
+
+function Window:CreateTab(Name, IconValue)
+	local Real = RealWindow:CreateTab({name = Name, icon = Icon(IconValue)})
+
+	return setmetatable({_tab = Real}, Tab)
+end
+
+function Shim:CreateWindow(Settings)
 	local FullName = tostring(Settings.Name or "Hub")
 	local Title, SubTitle = FullName:match("^(.-)%s*|%s*(.+)$")
 
+	local Props = {
+		name = Title or FullName,
+		subtitle = SubTitle or Settings.LoadingSubtitle,
+		theme = ThemeMap[Settings.Theme] or "default",
+		sidebarLayout = true,
+		showName = Title or FullName,
+	}
+
 	local Saving = Settings.ConfigurationSaving
+
 	if Saving and Saving.Enabled then
-		SaveEnabled = true
-		SaveFolder = Saving.FolderName or SaveFolder
-		SaveName = Saving.FileName or SaveName
+		Props.configuration = {
+			autoSave = true,
+			autoLoad = false, -- LoadConfiguration() does it once every element exists
+			fileName = Saving.FileName,
+			customFolder = Saving.FolderName,
+		}
 	end
 
-	local FluentWindow = Fluent:CreateWindow({
-		Title = Title or FullName,
-		SubTitle = SubTitle or Settings.LoadingSubtitle or "",
-		TabWidth = 160,
-		Size = UDim2.fromOffset(580, 460),
-		Acrylic = false,
-		Theme = ThemeMap[Settings.Theme] or "Dark",
-		MinimizeKey = Enum.KeyCode.RightControl,
-	})
+	RealWindow = Gen2:CreateWindow(Props)
 
-	local Window = setmetatable({_fluent = FluentWindow}, WindowClass)
+	local Wrapper = setmetatable({_real = RealWindow}, Window)
 
-	-- Works with both Window.ModifyTheme(x) and Window:ModifyTheme(x)
-	Window.ModifyTheme = function(A, B)
+	-- works as Window.ModifyTheme(x) and Window:ModifyTheme(x)
+	Wrapper.ModifyTheme = function(A, B)
 		local Theme = if B ~= nil then B else A
 
 		if typeof(Theme) ~= "string" then
@@ -488,18 +366,57 @@ function Rayfield:CreateWindow(Settings)
 		end
 
 		pcall(function()
-			Fluent:SetTheme(ThemeMap[Theme] or Theme)
+			RealWindow:ChangeTheme(ThemeMap[Theme] or Theme)
 		end)
 	end
 
-	WindowObject = Window
-
-	return Window
+	return Wrapper
 end
 
-local GetGenv = env.getgenv
+function Shim:Notify(Options)
+	if not RealWindow then
+		return
+	end
+
+	pcall(function()
+		RealWindow:Notify({
+			title = Options.Title,
+			content = Options.Content,
+			icon = Icon(Options.Image),
+			duration = Options.Duration,
+		})
+	end)
+end
+
+function Shim:LoadConfiguration()
+	if RealWindow then
+		pcall(function()
+			RealWindow:Load()
+		end)
+	end
+
+	-- the old library ran every callback once on load; do the same for any that haven't fired yet
+	for _, Entry in Registry do
+		if Entry.Fire and not Entry.Fired then
+			Entry.Fire()
+		end
+	end
+end
+
+function Shim:Destroy()
+	if RealWindow then
+		pcall(function()
+			RealWindow:Unload()
+		end)
+
+		RealWindow = nil
+	end
+end
+
+local GetGenv = getfenv().getgenv
+
 if GetGenv then
-	GetGenv().Rayfield = Rayfield
+	GetGenv().Rayfield = Shim
 end
 
-return Rayfield
+return Shim
