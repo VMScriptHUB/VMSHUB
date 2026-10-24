@@ -322,7 +322,7 @@ end
 pcall(function()
 	Window = Rayfield:CreateWindow({
 		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
-		Icon = 17288802854,
+		Icon = 87350324375899,
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
 		Theme = "Cobalt",
