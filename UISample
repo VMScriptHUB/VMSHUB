@@ -1,35 +1,38 @@
 local StartLoadTime = tick()
-local HttpService = game:GetService("HttpService") 
-local Players = game:GetService("Players") 
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local Player = Players.LocalPlayer
-local getgenv: () -> ({[string]: any}) = getfenv().getgenv
-local PlaceName: string = getgenv().PlaceName or game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-local getexecutorname = getfenv().getexecutorname 
-local identifyexecutor: () -> (string) = getfenv().identifyexecutor 
-local request = getfenv().request 
-local getconnections: (RBXScriptSignal) -> ({RBXScriptConnection}) = getfenv().getconnections 
-local queue_on_teleport: (Code: string) -> () = getfenv().queue_on_teleport 
-local setfpscap: (FPS: number) -> () = getfenv().setfpscap 
-local isrbxactive: () -> (boolean) = getfenv().isrbxactive 
-local setclipboard: (Text: string) -> () = getfenv().setclipboard 
-local firesignal: (RBXScriptSignal) -> () = getfenv().firesignal
-local ScriptVersion = getgenv().ScriptVersion
 
+-- Fixed: Falls back to _G if getgenv is not found in getfenv()
+local getgenv: () -> ({[string]: any}) = getfenv().getgenv or getgenv or function() return _G end
+local PlaceName: string = getgenv().PlaceName or game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+
+local getexecutorname = getfenv().getexecutorname
+local identifyexecutor: () -> (string) = getfenv().identifyexecutor
+local request = getfenv().request
+local getconnections: (RBXScriptSignal) -> ({RBXScriptConnection}) = getfenv().getconnections
+local queue_on_teleport: (Code: string) -> () = getfenv().queue_on_teleport
+local setfpscap: (FPS: number) -> () = getfenv().setfpscap
+local isrbxactive: () -> (boolean) = getfenv().isrbxactive
+local setclipboard: (Text: string) -> () = getfenv().setclipboard
+local firesignal: (RBXScriptSignal) -> () = getfenv().firesignal
+
+local ScriptVersion = getgenv().ScriptVersion
 getgenv().gethui = function() return game:GetService("CoreGui") end
 getgenv().FrostByteConnections = getgenv().FrostByteConnections or {}
 
-local function HandleConnection(Connection: RBXScriptConnection, Name: string) 
-	if getgenv().FrostByteConnections[Name] then 
-		getgenv().FrostByteConnections[Name]:Disconnect() 
+local function HandleConnection(Connection: RBXScriptConnection, Name: string)
+	if getgenv().FrostByteConnections[Name] then
+		getgenv().FrostByteConnections[Name]:Disconnect()
 	end
 	getgenv().FrostByteConnections[Name] = Connection
 end
 
 getgenv().HandleConnection = HandleConnection
 
-getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: PVInstance) -> (boolean)) 
-	for i, Child in Children do 
+getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: PVInstance) -> (boolean))
+	for i, Child in Children do
 		if Callback and not Callback(Child) then continue end
 		table.remove(Children, i)
 	end
@@ -46,24 +49,23 @@ getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: P
 		return (a:GetPivot().Position - CurrentPosition).Magnitude < (b:GetPivot().Position - CurrentPosition).Magnitude
 	end)
 
-	local Closest = Children[1]
-	return Closest
+	return Children[1]
 end
 
-if not firesignal and getconnections then 
-	firesignal = function(Signal: RBXScriptSignal) 
-		local Connections = getconnections(Signal) 
-		Connections[#Connections]:Fire() 
-	end 
+if not firesignal and getconnections then
+	firesignal = function(Signal: RBXScriptSignal)
+		local Connections = getconnections(Signal)
+		Connections[#Connections]:Fire()
+	end
 end
 
 local UnsupportedName = " (Executor Unsupported)"
-local function ApplyUnsupportedName(Name: string, Condition: boolean) 
-	return Name..if Condition then "" else UnsupportedName end
+local function ApplyUnsupportedName(Name: string, Condition: boolean)
+	return Name .. if Condition then "" else UnsupportedName
 end
 getgenv().ApplyUnsupportedName = ApplyUnsupportedName
 
-if queue_on_teleport then 
+if queue_on_teleport then
 	queue_on_teleport([[
 		local TeleportService = game:GetService("TeleportService")
 		local TeleportData = TeleportService:GetLocalPlayerTeleportData()
@@ -74,21 +76,30 @@ if queue_on_teleport then
 end
 
 if getgenv().Rayfield then getgenv().Rayfield:Destroy() end
-local Success, Rayfield = pcall(function() return loadstring(game:HttpGet('https://sirius.menu/rayfield'))() end)
+local Success, Rayfield = pcall(function()
+	return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
 
-local function SendNotification(Title: string, Text: string, Duration: number?, Button1: string?, Button2: string?, Callback: BindableFunction?) 
-	StarterGui:SetCore("SendNotification", { Title = Title, Text = Text, Duration = Duration or 10, Button1 = Button1, Button2 = Button2, Callback = Callback }) 
+local function SendNotification(Title: string, Text: string, Duration: number?, Button1: string?, Button2: string?, Callback: BindableFunction?)
+	StarterGui:SetCore("SendNotification", {
+		Title = Title,
+		Text = Text,
+		Duration = Duration or 10,
+		Button1 = Button1,
+		Button2 = Button2,
+		Callback = Callback
+	})
 end
 
-if not Success or not Rayfield or not Rayfield.CreateWindow then 
-	SendNotification("Error while loading Rayfield", "Try re-executing or rejoining.") 
-	return 
+if not Success or not Rayfield or not Rayfield.CreateWindow then
+	SendNotification("Error while loading Rayfield", "Try re-executing or rejoining.")
+	return
 end
 
 local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
 getgenv().Flags = Flags
 
-local function Notify(Title: string, Content: string, Image: string) 
+local function Notify(Title: string, Content: string, Image: string)
 	if not Rayfield then return end
 	Rayfield:Notify({
 		Title = Title,
@@ -99,13 +110,13 @@ local function Notify(Title: string, Content: string, Image: string)
 end
 getgenv().Notify = Notify
 
-task.spawn(function() 
-	while task.wait(Random.new():NextNumber(5 * 60, 10 * 60)) do 
-		Notify("Enjoying this script?", "Join the discord at discord.gg/rN4FDFjhHz", "heart") 
-	end 
+task.spawn(function()
+	while task.wait(Random.new():NextNumber(5 * 60, 10 * 60)) do
+		Notify("Enjoying this script?", "Join the discord at discord.gg/rN4FDFjhHz", "heart")
+	end
 end)
 
-if ScriptVersion and ScriptVersion ~= "Universal" then 
+if ScriptVersion and ScriptVersion ~= "Universal" then
 	local PlaceFileName = getgenv().PlaceFileName
 	if not PlaceFileName then
 		PlaceFileName = PlaceName:gsub("%b[]", "")
@@ -114,7 +125,7 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 
 	local BindableFunction = Instance.new("BindableFunction")
 	local Response = false
-	local Button1 = "✅ Yes" 
+	local Button1 = "✅ Yes"
 	local Button2 = "❌ No"
 	local File = `https://raw.githubusercontent.com/alyssagithub/Scripts/refs/heads/main/FrostByte/Games/{PlaceFileName}.lua`
 
@@ -146,12 +157,12 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 end
 
 local Window
-pcall(function() 
-	Window = Rayfield:CreateWindow({ 
-		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`, 
-		Icon = "snail", 
-		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌", 
-		LoadingSubtitle = PlaceName, 
+pcall(function()
+	Window = Rayfield:CreateWindow({
+		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
+		Icon = "snail",
+		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
+		LoadingSubtitle = PlaceName,
 		Theme = "DarkBlue",
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = false,
@@ -169,16 +180,15 @@ pcall(function()
 	getgenv().Window = Window
 end)
 
-function CreateUniversalTabs() 
-	local VirtualUser = game:GetService("VirtualUser") 
-	local VirtualInputManager = game:GetService("VirtualInputManager") 
-	local TeleportService = game:GetService("TeleportService") 
+function CreateUniversalTabs()
+	local VirtualUser = game:GetService("VirtualUser")
+	local VirtualInputManager = game:GetService("VirtualInputManager")
+	local TeleportService = game:GetService("TeleportService")
 	local RunService = game:GetService("RunService")
 
 	if not Window then return end
 
-	-- Updated Tab Names to adopt borderless, Icon + inline styling (No Box-type boundaries)
-	local Tab = Window:CreateTab("🏠 Main", "home") -- Created modern Icon Tabname combo
+	local Tab = Window:CreateTab("Client", "user")
 
 	Tab:CreateSection("Discord")
 
@@ -215,10 +225,10 @@ function CreateUniversalTabs()
 		Name = "🔒 • Anti AFK Disconnection",
 		CurrentValue = true,
 		Flag = "AntiAFK",
-		Callback = function()end,
+		Callback = function() end,
 	})
 
-	HandleConnection(Player.Idled:Connect(function()
+	getgenv().HandleConnection(Player.Idled:Connect(function()
 		if not Flags.AntiAFK.CurrentValue then return end
 		VirtualUser:CaptureController()
 		VirtualUser:ClickButton2(Vector2.zero)
@@ -268,7 +278,7 @@ function CreateUniversalTabs()
 		Increment = 1,
 		Suffix = "Studs/s",
 		CurrentValue = game:GetService("StarterPlayer").CharacterWalkSpeed,
-		Flag = "FPS",
+		Flag = "WalkSpeed",
 		Callback = function(Value)
 			local Character = Player.Character or Player.CharacterAdded:Wait()
 			if not Character then return end
@@ -394,52 +404,19 @@ function CreateUniversalTabs()
 		PlaceholderText = "New Name Here",
 		RemoveTextAfterFocusLost = false,
 		Flag = "NameReplacement",
-		Callback = function()end,
+		Callback = function() end,
 	})
 
 	Tab:CreateSection("UI")
 
 	local CustomThemes = {
-		BlackHistoryMonth = {
-			TextColor = Color3.fromRGB(),
-			Background = Color3.fromRGB(),
-			Topbar = Color3.fromRGB(),
-			Shadow = Color3.fromRGB(),
-			NotificationBackground = Color3.fromRGB(),
-			NotificationActionsBackground = Color3.fromRGB(),
-			TabBackground = Color3.fromRGB(),
-			TabStroke = Color3.fromRGB(),
-			TabBackgroundSelected = Color3.fromRGB(),
-			TabTextColor = Color3.fromRGB(),
-			SelectedTabTextColor = Color3.fromRGB(),
-			ElementBackground = Color3.fromRGB(),
-			ElementBackgroundHover = Color3.fromRGB(),
-			SecondaryElementBackground = Color3.fromRGB(),
-			ElementStroke = Color3.fromRGB(),
-			SecondaryElementStroke = Color3.fromRGB(),
-			SliderBackground = Color3.fromRGB(),
-			SliderProgress = Color3.fromRGB(),
-			SliderStroke = Color3.fromRGB(),
-			ToggleBackground = Color3.fromRGB(),
-			ToggleEnabled = Color3.fromRGB(),
-			ToggleDisabled = Color3.fromRGB(),
-			ToggleEnabledStroke = Color3.fromRGB(),
-			ToggleDisabledStroke = Color3.fromRGB(),
-			ToggleEnabledOuterStroke = Color3.fromRGB(),
-			ToggleDisabledOuterStroke = Color3.fromRGB(),
-			DropdownSelected = Color3.fromRGB(),
-			DropdownUnselected = Color3.fromRGB(),
-			InputBackground = Color3.fromRGB(),
-			InputStroke = Color3.fromRGB(),
-			PlaceholderColor = Color3.fromRGB()
-		},
 		Default = "DarkBlue",
 		Dark = "Default"
 	}
 
 	Tab:CreateDropdown({
 		Name = "🖼 • Change Theme",
-		Options = {"BlackHistoryMonth", "Default", "Dark", "AmberGlow", "Amethyst", "Ocean", "Light", "Bloom", "Green", "Serenity"},
+		Options = {"Default", "Dark", "AmberGlow", "Amethyst", "Ocean", "Light", "Bloom", "Green", "Serenity"},
 		MultipleOptions = false,
 		Flag = "Theme",
 		Callback = function(CurrentOption)
@@ -457,12 +434,6 @@ function CreateUniversalTabs()
 			TeleportService:Teleport(game.PlaceId, Player, {FrostByteRejoin = true})
 		end,
 	})
-
-	-- Build remaining sidebar Tabs using horizontal "Icon tabname" styles to prevent chunky "box" looks
-	local TeleportTab = Window:CreateTab("🌀 Teleport", "navigation")
-	local MiscTab     = Window:CreateTab("⚙️ Misc", "settings")
-	local EventTab    = Window:CreateTab("🏆 Event", "activity")
-	local ShopTab     = Window:CreateTab("🛒 Shop", "shopping-cart")
 
 	Rayfield:LoadConfiguration()
 
