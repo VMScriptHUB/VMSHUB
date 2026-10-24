@@ -104,7 +104,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/alyssagithub/Scripts/
 	]])
 end
 
--- Safely clean up prior instances without throwing missing method errors
+-- Safely cleanup any previous Rayfield instance
 if getgenv().Window and typeof(getgenv().Window.Destroy) == "function" then
 	pcall(function()
 		getgenv().Window:Destroy()
@@ -155,16 +155,20 @@ getgenv().Rayfield = Rayfield
 local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
 getgenv().Flags = Flags
 
-local function Notify(Title: string, Content: string, Image: string)
+-- Supports either Notify(Title, Content, "icon") or Notify(Title, Content, durationNumber)
+local function Notify(Title: string, Content: string, ImageOrDuration: any, Duration: number?)
 	if not Rayfield then
 		return
 	end
 
+	local duration = (typeof(ImageOrDuration) == "number" and ImageOrDuration) or Duration or 10
+	local image = (typeof(ImageOrDuration) == "string" and ImageOrDuration) or "info"
+
 	Rayfield:Notify({
 		Title = Title,
 		Content = Content,
-		Duration = 10,
-		Image = Image or "info",
+		Duration = duration,
+		Image = image,
 	})
 end
 
@@ -244,7 +248,7 @@ pcall(function()
 		Icon = "snail",
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
-		Theme = "DarkBlue",
+		Theme = "Cobalt", -- Gen2 built-in theme (Cobalt replaces DarkBlue)
 
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = false,
@@ -275,12 +279,13 @@ function CreateUniversalTabs()
 		return
 	end
 	
+	-- Rayfield Gen2: CreateTab table syntax
 	local Tab = Window:CreateTab({
 		Name = "Client",
 		Icon = "user"
 	})
 	
-	Tab:CreateSection("Discord")
+	Tab:CreateSection({ Name = "Discord" })
 
 	Tab:CreateButton({
 		Name = "🐌 • Join the VMS HUB Discord!",
@@ -310,7 +315,7 @@ function CreateUniversalTabs()
 
 	Tab:CreateLabel("https://discord.gg/rN4FDFjhHz", "link")
 
-	Tab:CreateSection("AFK")
+	Tab:CreateSection({ Name = "AFK" })
 
 	Tab:CreateToggle({
 		Name = "🔒 • Anti AFK Disconnection",
@@ -330,7 +335,7 @@ function CreateUniversalTabs()
 		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightMeta, false, game)
 	end), "AntiAFK")
 	
-	Tab:CreateSection("Performance")
+	Tab:CreateSection({ Name = "Performance" })
 	
 	Tab:CreateSlider({
 		Name = ApplyUnsupportedName("🎮 • Max FPS (0 for Unlimited)", setfpscap),
@@ -373,7 +378,7 @@ function CreateUniversalTabs()
 		end,
 	})
 	
-	Tab:CreateSection("Properties")
+	Tab:CreateSection({ Name = "Properties" })
 	
 	Tab:CreateSlider({
 		Name = "💨 • Set WalkSpeed",
@@ -381,7 +386,7 @@ function CreateUniversalTabs()
 		Increment = 1,
 		Suffix = "Studs/s",
 		CurrentValue = game:GetService("StarterPlayer").CharacterWalkSpeed,
-		Flag = "WalkSpeed",
+		Flag = "WalkSpeed", -- Corrected from "FPS" to avoid flag collisions
 		Callback = function(Value)
 			local Character = Player.Character or Player.CharacterAdded:Wait()
 			
@@ -399,7 +404,7 @@ function CreateUniversalTabs()
 		end,
 	})
 	
-	Tab:CreateSection("Safety")
+	Tab:CreateSection({ Name = "Safety" })
 	
 	local StaffRoleNames = {
 		"mod",
@@ -554,7 +559,7 @@ function CreateUniversalTabs()
 		Callback = function()end,
 	})
 	
-	Tab:CreateSection("UI")
+	Tab:CreateSection({ Name = "UI" })
 	
 	local CustomThemes = {
 		BlackHistoryMonth = {
@@ -597,13 +602,13 @@ function CreateUniversalTabs()
 			InputStroke = Color3.fromRGB(40, 40, 40),
 			PlaceholderColor = Color3.fromRGB(120, 120, 120)
 		},
-		Default = "DarkBlue",
+		Default = "Default",
 		Dark = "Default"
 	}
 	
 	Tab:CreateDropdown({
 		Name = "🖼 • Change Theme",
-		Options = {"BlackHistoryMonth", "Default", "Dark", "AmberGlow", "Amethyst", "Ocean", "Light", "Bloom", "Green", "Serenity"},
+		Options = {"Default", "Cobalt", "Ember", "Amethyst", "Frost", "Rose", "BlackHistoryMonth"},
 		MultipleOptions = false,
 		Flag = "Theme",
 		Callback = function(CurrentOption)
@@ -617,7 +622,7 @@ function CreateUniversalTabs()
 		end,
 	})
 
-	Tab:CreateSection("Development")
+	Tab:CreateSection({ Name = "Development" })
 
 	Tab:CreateButton({
 		Name = "⚙️ • Rejoin",
