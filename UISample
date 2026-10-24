@@ -300,26 +300,27 @@ end
 
 pcall(function()
 	Window = Rayfield:CreateWindow({
-		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
-		Icon = "snail",
-		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
-		LoadingSubtitle = PlaceName,
-		Theme = "Cobalt", -- Built-in Gen2 theme
-
-		DisableRayfieldPrompts = false,
-		DisableBuildWarnings = false,
-
-		ConfigurationSaving = {
-			Enabled = true,
-			FolderName = "VMSHUB",
-			FileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`
-		},
-
-		Discord = {
-			Enabled = true,
-			Invite = "rN4FDFjhHz",
-			RememberJoins = true
-		},
+	    Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
+	    Icon = "snail",
+	    LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
+	    LoadingSubtitle = PlaceName,
+	    Theme = "Cobalt",
+	    sidebarLayout = true, -- <--- Enables the Gen2 Sidebar Layout
+	
+	    DisableRayfieldPrompts = false,
+	    DisableBuildWarnings = false,
+	
+	    ConfigurationSaving = {
+	        Enabled = true,
+	        FolderName = "VMSHUB",
+	        FileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`
+	    },
+	
+	    Discord = {
+	        Enabled = true,
+	        Invite = "rN4FDFjhHz",
+	        RememberJoins = true
+	    },
 	})
 	
 	getgenv().Window = Window
