@@ -332,10 +332,12 @@ pcall(function()
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = false,
 
-		ConfigurationSaving = {
-			Enabled = true,
-			FolderName = "VMSHUB",
-			FileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`
+		-- GEN2 AUTO-SAVE CONFIGURATION
+		configuration = {
+			autoSave = true,
+			autoLoad = true,
+			fileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`,
+			customFolder = "VMSHUB",
 		},
 
 		Discord = {
