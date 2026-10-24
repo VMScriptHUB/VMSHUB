@@ -155,7 +155,6 @@ getgenv().Rayfield = Rayfield
 local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
 getgenv().Flags = Flags
 
--- Supports either Notify(Title, Content, "icon") or Notify(Title, Content, durationNumber)
 local function Notify(Title: string, Content: string, ImageOrDuration: any, Duration: number?)
 	if not Rayfield then
 		return
@@ -248,7 +247,7 @@ pcall(function()
 		Icon = "snail",
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
-		Theme = "Cobalt", -- Gen2 built-in theme (Cobalt replaces DarkBlue)
+		Theme = "Cobalt", -- Replaces DarkBlue
 
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = false,
@@ -284,6 +283,13 @@ function CreateUniversalTabs()
 		Name = "Client",
 		Icon = "user"
 	})
+
+	-- Compatibility shim for CreateLabel / CreateParagraph on this tab
+	if not Tab.CreateLabel then
+		function Tab:CreateLabel(text)
+			return Tab:CreateText({ text = tostring(text) })
+		end
+	end
 	
 	Tab:CreateSection({ Name = "Discord" })
 
@@ -313,7 +319,10 @@ function CreateUniversalTabs()
 		end,
 	})
 
-	Tab:CreateLabel("https://discord.gg/rN4FDFjhHz", "link")
+	-- Rayfield Gen2: Replaced CreateLabel with CreateText
+	Tab:CreateText({
+		text = "https://discord.gg/rN4FDFjhHz"
+	})
 
 	Tab:CreateSection({ Name = "AFK" })
 
@@ -386,7 +395,7 @@ function CreateUniversalTabs()
 		Increment = 1,
 		Suffix = "Studs/s",
 		CurrentValue = game:GetService("StarterPlayer").CharacterWalkSpeed,
-		Flag = "WalkSpeed", -- Corrected from "FPS" to avoid flag collisions
+		Flag = "WalkSpeed",
 		Callback = function(Value)
 			local Character = Player.Character or Player.CharacterAdded:Wait()
 			
