@@ -152,26 +152,85 @@ end
 
 getgenv().Rayfield = Rayfield
 
-local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
-getgenv().Flags = Flags
+local Window
 
+-- Rayfield Gen2: Notification handler (called on Window)
 local function Notify(Title: string, Content: string, ImageOrDuration: any, Duration: number?)
-	if not Rayfield then
-		return
-	end
-
 	local duration = (typeof(ImageOrDuration) == "number" and ImageOrDuration) or Duration or 10
 	local image = (typeof(ImageOrDuration) == "string" and ImageOrDuration) or "info"
 
-	Rayfield:Notify({
-		Title = Title,
-		Content = Content,
-		Duration = duration,
-		Image = image,
-	})
+	local win = Window or getgenv().Window
+	if win and typeof(win.Notify) == "function" then
+		win:Notify({
+			Title = Title,
+			Content = Content,
+			Duration = duration,
+			Image = image,
+		})
+	elseif Rayfield and typeof(Rayfield.Notify) == "function" then
+		Rayfield:Notify({
+			Title = Title,
+			Content = Content,
+			Duration = duration,
+			Image = image,
+		})
+	else
+		StarterGui:SetCore("SendNotification", {
+			Title = Title,
+			Text = Content,
+			Duration = duration,
+		})
+	end
 end
 
 getgenv().Notify = Notify
+
+-- Compatibility layer for Flags: seamlessly maps Flags.Key.CurrentValue <-> Window.Flags[Key]
+local Flags = setmetatable({}, {
+	__index = function(_, key)
+		local win = Window or getgenv().Window
+		local rawVal
+		if win then
+			if win.Flags and win.Flags[key] ~= nil then
+				rawVal = win.Flags[key]
+			elseif typeof(win.Get) == "function" then
+				rawVal = win:Get(key)
+			end
+		end
+		if rawVal == nil and Rayfield and Rayfield.Flags then
+			rawVal = Rayfield.Flags[key]
+		end
+
+		if typeof(rawVal) == "table" and rawVal.CurrentValue ~= nil then
+			return rawVal
+		end
+
+		local current = rawVal
+		if current == nil then current = false end
+
+		return {
+			CurrentValue = current,
+			CurrentOption = typeof(current) == "table" and current or {tostring(current)},
+			Value = current,
+			Set = function(_, newVal)
+				local w = Window or getgenv().Window
+				if w and typeof(w.Set) == "function" then
+					w:Set(key, newVal)
+				elseif w and w.Flags then
+					w.Flags[key] = newVal
+				end
+			end
+		}
+	end,
+	__newindex = function(_, key, val)
+		local win = Window or getgenv().Window
+		if win and win.Flags then
+			win.Flags[key] = val
+		end
+	end
+})
+
+getgenv().Flags = Flags
 
 task.spawn(function()
 	while task.wait(Random.new():NextNumber(5 * 60, 10 * 60)) do
@@ -239,15 +298,13 @@ if ScriptVersion and ScriptVersion ~= "Universal" then
 	end)
 end
 
-local Window
-
 pcall(function()
 	Window = Rayfield:CreateWindow({
 		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
 		Icon = "snail",
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
-		Theme = "Cobalt", -- Replaces DarkBlue
+		Theme = "Cobalt", -- Built-in Gen2 theme
 
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = false,
@@ -284,13 +341,6 @@ function CreateUniversalTabs()
 		Icon = "user"
 	})
 
-	-- Compatibility shim for CreateLabel / CreateParagraph on this tab
-	if not Tab.CreateLabel then
-		function Tab:CreateLabel(text)
-			return Tab:CreateText({ text = tostring(text) })
-		end
-	end
-	
 	Tab:CreateSection({ Name = "Discord" })
 
 	Tab:CreateButton({
@@ -319,7 +369,6 @@ function CreateUniversalTabs()
 		end,
 	})
 
-	-- Rayfield Gen2: Replaced CreateLabel with CreateText
 	Tab:CreateText({
 		text = "https://discord.gg/rN4FDFjhHz"
 	})
@@ -627,7 +676,13 @@ function CreateUniversalTabs()
 				return
 			end
 			
-			Window:ModifyTheme(CustomThemes[selectedTheme] or selectedTheme)
+			local theme = CustomThemes[selectedTheme] or selectedTheme
+			-- Rayfield Gen2 uses ChangeTheme
+			if Window and typeof(Window.ChangeTheme) == "function" then
+				Window:ChangeTheme(theme)
+			elseif Window and typeof(Window.ModifyTheme) == "function" then
+				Window:ModifyTheme(theme)
+			end
 		end,
 	})
 
@@ -640,20 +695,11 @@ function CreateUniversalTabs()
 		end,
 	})
 	
-	Rayfield:LoadConfiguration()
-	
-	local OriginalFlags = getgenv().OriginalFlags
-	
-	if OriginalFlags then
-		for Name: string, Flag in Flags do
-			local Value = OriginalFlags[Name]
-			
-			if Value == nil then
-				continue
-			end
-			
-			Flag:Set(Value)
-		end
+	-- Gen2 config is automatic; safely attempt only if function exists
+	if Window and typeof(Window.LoadConfiguration) == "function" then
+		pcall(function() Window:LoadConfiguration() end)
+	elseif Rayfield and typeof(Rayfield.LoadConfiguration) == "function" then
+		pcall(function() Rayfield:LoadConfiguration() end)
 	end
 	
 	Notify("Welcome to VMS HUB", `Loaded in {math.floor((tick() - StartLoadTime) * 10) / 10}s`, "loader-circle")
