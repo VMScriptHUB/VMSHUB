@@ -371,7 +371,7 @@ function CreateUniversalTabs()
 		return
 	end
 
-    local Tab = Window:CreateTab({ name = "Client", icon = 13451653612 })
+    local Tab = Window:CreateTab({ name = "Client", icon = 94743950497910 })
 
 	Tab:CreateSection({ Name = "Discord" })
 
