@@ -1,458 +1,505 @@
-local StartLoadTime = tick()
+--[[
+	FrostByteUI.lua
+	Rayfield-compatible wrapper over Fluent (left sidebar tabs, modern look).
+	Supports: CreateWindow, CreateTab, CreateSection, CreateLabel, CreateParagraph,
+	CreateButton, CreateToggle, CreateSlider, CreateInput, CreateDropdown,
+	CreateKeybind, CreateColorPicker, Notify, Flags, LoadConfiguration, Destroy.
+]]
+
+local FLUENT_URL = "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
+
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local Player = Players.LocalPlayer
+local env = getfenv()
 
--- Fixed: Falls back to _G if getgenv is not found in getfenv()
-local getgenv: () -> ({[string]: any}) = getfenv().getgenv or getgenv or function() return _G end
-local PlaceName: string = getgenv().PlaceName or game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+local isfile, readfile, writefile = env.isfile, env.readfile, env.writefile
+local isfolder, makefolder = env.isfolder, env.makefolder
 
-local getexecutorname = getfenv().getexecutorname
-local identifyexecutor: () -> (string) = getfenv().identifyexecutor
-local request = getfenv().request
-local getconnections: (RBXScriptSignal) -> ({RBXScriptConnection}) = getfenv().getconnections
-local queue_on_teleport: (Code: string) -> () = getfenv().queue_on_teleport
-local setfpscap: (FPS: number) -> () = getfenv().setfpscap
-local isrbxactive: () -> (boolean) = getfenv().isrbxactive
-local setclipboard: (Text: string) -> () = getfenv().setclipboard
-local firesignal: (RBXScriptSignal) -> () = getfenv().firesignal
-
-local ScriptVersion = getgenv().ScriptVersion
-getgenv().gethui = function() return game:GetService("CoreGui") end
-getgenv().FrostByteConnections = getgenv().FrostByteConnections or {}
-
-local function HandleConnection(Connection: RBXScriptConnection, Name: string)
-	if getgenv().FrostByteConnections[Name] then
-		getgenv().FrostByteConnections[Name]:Disconnect()
-	end
-	getgenv().FrostByteConnections[Name] = Connection
-end
-
-getgenv().HandleConnection = HandleConnection
-
-getgenv().GetClosestChild = function(Children: {PVInstance}, Callback: (Child: PVInstance) -> (boolean))
-	for i, Child in Children do
-		if Callback and not Callback(Child) then continue end
-		table.remove(Children, i)
-	end
-
-	local Character = Player.Character
-	if not Character then return end
-
-	local HumanoidRootPart: Part = Character:FindFirstChild("HumanoidRootPart")
-	if not HumanoidRootPart then return end
-
-	local CurrentPosition: Vector3 = HumanoidRootPart.Position
-
-	table.sort(Children, function(a: Model, b: Model)
-		return (a:GetPivot().Position - CurrentPosition).Magnitude < (b:GetPivot().Position - CurrentPosition).Magnitude
-	end)
-
-	return Children[1]
-end
-
-if not firesignal and getconnections then
-	firesignal = function(Signal: RBXScriptSignal)
-		local Connections = getconnections(Signal)
-		Connections[#Connections]:Fire()
-	end
-end
-
-local UnsupportedName = " (Executor Unsupported)"
-local function ApplyUnsupportedName(Name: string, Condition: boolean)
-	return Name .. if Condition then "" else UnsupportedName
-end
-getgenv().ApplyUnsupportedName = ApplyUnsupportedName
-
-if queue_on_teleport then
-	queue_on_teleport([[
-		local TeleportService = game:GetService("TeleportService")
-		local TeleportData = TeleportService:GetLocalPlayerTeleportData()
-		if not TeleportData then return end
-		if typeof(TeleportData) == "table" and TeleportData.FrostByteRejoin then return end
-		loadstring(game:HttpGet("https://raw.githubusercontent.com/alyssagithub/Scripts/refs/heads/main/FrostByte/Initiate.lua"))()
-	]])
-end
-
-if getgenv().Rayfield then getgenv().Rayfield:Destroy() end
-local Success, Rayfield = pcall(function()
-	return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local ok, Fluent = pcall(function()
+	return loadstring(game:HttpGet(FLUENT_URL))()
 end)
 
-local function SendNotification(Title: string, Text: string, Duration: number?, Button1: string?, Button2: string?, Callback: BindableFunction?)
-	StarterGui:SetCore("SendNotification", {
-		Title = Title,
-		Text = Text,
-		Duration = Duration or 10,
-		Button1 = Button1,
-		Button2 = Button2,
-		Callback = Callback
-	})
+if not ok or typeof(Fluent) ~= "table" then
+	return nil
 end
 
-if not Success or not Rayfield or not Rayfield.CreateWindow then
-	SendNotification("Error while loading Rayfield", "Try re-executing or rejoining.")
-	return
-end
+local Rayfield = {Flags = {}}
+local Flags = Rayfield.Flags
 
-local Flags: {[string]: {["CurrentValue"]: any, ["CurrentOption"]: {string}}} = Rayfield.Flags
-getgenv().Flags = Flags
+local SaveEnabled, SaveFolder, SaveName = false, "FrostByte", "Config"
+local Suppress = false
+local SaveQueued = false
+local Counter = 0
+local WindowObject
 
-local function Notify(Title: string, Content: string, Image: string)
-	if not Rayfield then return end
-	Rayfield:Notify({
-		Title = Title,
-		Content = Content,
-		Duration = 10,
-		Image = Image or "info",
-	})
-end
-getgenv().Notify = Notify
+local ThemeMap = {
+	Default = "Dark",
+	Dark = "Darker",
+	Light = "Light",
+	Ocean = "Aqua",
+	Amethyst = "Amethyst",
+	Bloom = "Rose",
+	AmberGlow = "Dark",
+	Green = "Aqua",
+	Serenity = "Aqua",
+	DarkBlue = "Dark",
+}
 
-task.spawn(function()
-	while task.wait(Random.new():NextNumber(5 * 60, 10 * 60)) do
-		Notify("Enjoying this script?", "Join the discord at discord.gg/rN4FDFjhHz", "heart")
-	end
-end)
-
-if ScriptVersion and ScriptVersion ~= "Universal" then
-	local PlaceFileName = getgenv().PlaceFileName
-	if not PlaceFileName then
-		PlaceFileName = PlaceName:gsub("%b[]", "")
-		PlaceFileName = PlaceFileName:gsub("[^%a]", "")
+local function SafeCall(Callback, ...)
+	if typeof(Callback) ~= "function" then
+		return
 	end
 
-	local BindableFunction = Instance.new("BindableFunction")
-	local Response = false
-	local Button1 = "✅ Yes"
-	local Button2 = "❌ No"
-	local File = `https://raw.githubusercontent.com/alyssagithub/Scripts/refs/heads/main/FrostByte/Games/{PlaceFileName}.lua`
+	local Success, Err = pcall(Callback, ...)
 
-	BindableFunction.OnInvoke = function(Button: string)
-		Response = true
-		if Button == Button1 then
-			local OriginalFlags = {}
-			for i, v in Flags do
-				if typeof(v.CurrentValue) ~= "boolean" then continue end
-				OriginalFlags[i] = v.CurrentValue
-				v:Set(false)
-			end
-			getgenv().OriginalFlags = OriginalFlags
-			loadstring(game:HttpGet(File))()
+	if not Success then
+		warn("[FrostByteUI] callback error:", Err)
+	end
+end
+
+local function NewFlag(Name, Entry)
+	Counter += 1
+
+	Name = Name or ("Unnamed" .. Counter)
+
+	if Flags[Name] then
+		Name = Name .. "_" .. Counter -- duplicate flag names would overwrite each other
+	end
+
+	Flags[Name] = Entry
+	Entry.Name = Name
+
+	return Name
+end
+
+-- Saving / loading --------------------------------------------------------
+
+local function GetPath()
+	return `{SaveFolder}/{SaveName}.json`
+end
+
+local function Encode(Entry)
+	if Entry.Type == "Dropdown" then
+		return Entry.CurrentOption
+	elseif Entry.Type == "Keybind" then
+		return Entry.CurrentKeybind
+	elseif Entry.Type == "Color" then
+		return Entry.CurrentValue:ToHex()
+	end
+
+	return Entry.CurrentValue
+end
+
+local function Save()
+	SaveQueued = false
+
+	if not SaveEnabled or not writefile then
+		return
+	end
+
+	local Data = {}
+
+	for Name, Entry in Flags do
+		Data[Name] = Encode(Entry)
+	end
+
+	pcall(function()
+		if makefolder and isfolder and not isfolder(SaveFolder) then
+			makefolder(SaveFolder)
 		end
-	end
 
-	task.spawn(function()
-		while task.wait(60) do
-			local Result = game:HttpGet(File)
-			if not Result then continue end
-			Result = Result:split('getgenv().ScriptVersion = "')[2]
-			Result = Result:split('"')[1]
-			if Result == ScriptVersion then continue end
-			SendNotification(`A new FrostByte version {Result} has been detected!`, "Would you like to load it?", math.huge, Button1, Button2, BindableFunction)
-			break
-		end
+		writefile(GetPath(), HttpService:JSONEncode(Data))
 	end)
 end
 
-local Window
-pcall(function()
-	Window = Rayfield:CreateWindow({
-		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
-		Icon = "snail",
-		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
-		LoadingSubtitle = PlaceName,
-		Theme = "DarkBlue",
-		DisableRayfieldPrompts = false,
-		DisableBuildWarnings = false,
-		ConfigurationSaving = {
-			Enabled = true,
-			FolderName = "VMSHUB",
-			FileName = `{getgenv().PlaceFileName or `DevMode-{game.PlaceId}`}-{Player.Name}`
-		},
-		Discord = {
-			Enabled = true,
-			Invite = "rN4FDFjhHz",
-			RememberJoins = true
-		},
-	})
-	getgenv().Window = Window
-end)
-
-function CreateUniversalTabs()
-	local VirtualUser = game:GetService("VirtualUser")
-	local VirtualInputManager = game:GetService("VirtualInputManager")
-	local TeleportService = game:GetService("TeleportService")
-	local RunService = game:GetService("RunService")
-
-	if not Window then return end
-
-	local Tab = Window:CreateTab("Client", "user")
-
-	Tab:CreateSection("Discord")
-
-	Tab:CreateButton({
-		Name = "🐌 • Join the VMS HUB Discord!",
-		Callback = function()
-			if request then
-				request({
-					Url = 'http://127.0.0.1:6463/rpc?v=1',
-					Method = 'POST',
-					Headers = {
-						['Content-Type'] = 'application/json',
-						Origin = 'https://discord.com'
-					},
-					Body = HttpService:JSONEncode({
-						cmd = 'INVITE_BROWSER',
-						nonce = HttpService:GenerateGUID(false),
-						args = {code = 'rN4FDFjhHz'}
-					})
-				})
-			elseif setclipboard then
-				setclipboard("https://discord.gg/rN4FDFjhHz")
-				Notify("Success!", "Copied Discord Link to Clipboard.")
-			end
-			Notify("Discord", "https://discord.gg/rN4FDFjhHz")
-		end,
-	})
-
-	Tab:CreateLabel("https://discord.gg/rN4FDFjhHz", "link")
-
-	Tab:CreateSection("AFK")
-
-	Tab:CreateToggle({
-		Name = "🔒 • Anti AFK Disconnection",
-		CurrentValue = true,
-		Flag = "AntiAFK",
-		Callback = function() end,
-	})
-
-	getgenv().HandleConnection(Player.Idled:Connect(function()
-		if not Flags.AntiAFK.CurrentValue then return end
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.zero)
-		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightMeta, false, game)
-		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightMeta, false, game)
-	end), "AntiAFK")
-
-	Tab:CreateSection("Performance")
-
-	Tab:CreateSlider({
-		Name = ApplyUnsupportedName("🎮 • Max FPS (0 for Unlimited)", setfpscap),
-		Range = {0, 240},
-		Increment = 1,
-		Suffix = "FPS",
-		CurrentValue = 0,
-		Flag = "FPS",
-		Callback = function(Value)
-			if not setfpscap then return end
-			setfpscap(Value)
-		end,
-	})
-
-	local PreviousValue
-
-	Tab:CreateToggle({
-		Name = ApplyUnsupportedName("⬜ • Disable 3D Rendering When Tabbed Out", isrbxactive),
-		CurrentValue = false,
-		Flag = "Rendering",
-		Callback = function(Value)
-			while Flags.Rendering.CurrentValue and task.wait() do
-				local CurrentValue = isrbxactive()
-				if PreviousValue == CurrentValue then continue end
-				PreviousValue = CurrentValue
-				RunService:Set3dRenderingEnabled(CurrentValue)
-			end
-			if Value then
-				RunService:Set3dRenderingEnabled(true)
-			end
-		end,
-	})
-
-	Tab:CreateSection("Properties")
-
-	Tab:CreateSlider({
-		Name = "💨 • Set WalkSpeed",
-		Range = {0, 300},
-		Increment = 1,
-		Suffix = "Studs/s",
-		CurrentValue = game:GetService("StarterPlayer").CharacterWalkSpeed,
-		Flag = "WalkSpeed",
-		Callback = function(Value)
-			local Character = Player.Character or Player.CharacterAdded:Wait()
-			if not Character then return end
-			local Humanoid = Character:WaitForChild("Humanoid", 5)
-			if not Humanoid then return end
-			Humanoid.WalkSpeed = Value
-		end,
-	})
-
-	Tab:CreateSection("Safety")
-
-	local StaffRoleNames = {"mod", "dev", "admin", "owner", "founder", "manag"}
-
-	local function IsInGroup(CheckPlayer: Player, GroupId: number)
-		local Success, Result = pcall(CheckPlayer.IsInGroup, CheckPlayer, GroupId)
-		return Success and Result
+local function QueueSave()
+	if SaveQueued or not SaveEnabled then
+		return
 	end
 
-	local function GetRoleInGroup(CheckPlayer: Player, GroupId: number)
-		local Success, Result = pcall(CheckPlayer.GetRoleInGroup, CheckPlayer, GroupId)
-		return if Success then Result else "Guest"
+	SaveQueued = true
+	task.delay(1, Save)
+end
+
+local function Read()
+	if not SaveEnabled or not isfile or not readfile then
+		return
 	end
 
-	local function GetRankInGroup(CheckPlayer: Player, GroupId: number)
-		local Success, Result = pcall(CheckPlayer.GetRankInGroup, CheckPlayer, GroupId)
-		return if Success then Result else 0
-	end
-
-	local function GetStaffRole(CheckPlayer: Player)
-		local StaffRole
-		if IsInGroup(CheckPlayer, 1200769) then
-			StaffRole = "Roblox Admin"
-		end
-		if game.CreatorType ~= Enum.CreatorType.Group then return end
-
-		local CreatorId = game.CreatorId
-		local Role = GetRoleInGroup(CheckPlayer, CreatorId)
-
-		for _, Name in StaffRoleNames do
-			if typeof(Role) == "string" and Role:lower():find(Name) then
-				StaffRole = Role
-			end
+	local Success, Data = pcall(function()
+		if not isfile(GetPath()) then
+			return
 		end
 
-		if GetRankInGroup(CheckPlayer, CreatorId) == 255 then
-			StaffRole = "Group Owner"
-		end
-		return StaffRole
-	end
+		return HttpService:JSONDecode(readfile(GetPath()))
+	end)
 
-	local function CheckIfStaff(CheckPlayer: Player)
-		if not Flags.StaffJoin.CurrentValue then return end
-		local StaffRole = GetStaffRole(CheckPlayer)
-		if not StaffRole then return end
-		Player:Kick(`The player '{CheckPlayer.Name}' was detected to be a staff member, their role is '{StaffRole}'.\n\nIf you believe this is false, contact the dev of FrostByte.`)
-	end
+	return Success and Data or nil
+end
 
-	Tab:CreateToggle({
-		Name = "🚪 • Auto Leave When Staff Joins",
-		CurrentValue = false,
-		Flag = "StaffJoin",
-		Callback = function(Value)
-			if not Value then return end
-			for _, CheckPlayer in Players:GetPlayers() do
-				CheckIfStaff(CheckPlayer)
-			end
-		end,
+-- Notifications / lifecycle -----------------------------------------------
+
+function Rayfield:Notify(Options)
+	Fluent:Notify({
+		Title = Options.Title or "Notification",
+		Content = Options.Content or "",
+		Duration = Options.Duration or 6,
 	})
+end
 
-	HandleConnection(Players.PlayerAdded:Connect(CheckIfStaff), "StaffJoin")
-	getgenv().Role = GetStaffRole(Player)
+function Rayfield:Destroy()
+	pcall(function()
+		Fluent:Destroy()
+	end)
+end
 
-	local Connections = {}
-	local OriginalText = {}
+function Rayfield:LoadConfiguration()
+	local Data = Read()
 
-	local function HandleUsernameChange(Object: Instance)
-		if not Flags.HideName.CurrentValue then return end
-		if not Object:IsA("TextLabel") and not Object:IsA("TextBox") and not Object:IsA("TextButton") then return end
+	for Name, Entry in Flags do
+		local Saved = Data and Data[Name]
 
-		local NameReplacement = Flags.NameReplacement.CurrentValue
-
-		if not Connections[Object] then
-			Connections[Object] = true
-			Object:GetPropertyChangedSignal("Text"):Connect(HandleUsernameChange)
+		if Saved ~= nil then
+			Suppress = true
+			pcall(Entry.Set, Entry, Saved)
+			Suppress = false
 		end
 
-		if Object.Text:find(Player.Name) then
-			OriginalText[Object] = Object.Text
-			Object.Text = Object.Text:gsub(Player.Name, NameReplacement)
-		elseif Object.Text:find(Player.DisplayName) then
-			OriginalText[Object] = Object.Text
-			Object.Text = Object.Text:gsub(Player.DisplayName, NameReplacement)
+		if Entry.Callback and Entry.Type ~= "Keybind" then
+			local Value = if Entry.Type == "Dropdown" then Entry.CurrentOption else Entry.CurrentValue
+			task.spawn(SafeCall, Entry.Callback, Value)
 		end
 	end
 
-	local DescendantAddedConnection
+	if WindowObject and WindowObject._first then
+		pcall(function()
+			WindowObject._fluent:SelectTab(1)
+		end)
+	end
+end
 
-	Tab:CreateToggle({
-		Name = "🛡 • Hide Username and Display Name (Client-Sided)",
-		CurrentValue = false,
-		Flag = "HideName",
-		Callback = function(Value)
-			if Value and not DescendantAddedConnection then
-				for i, v in game:GetDescendants() do
-					HandleUsernameChange(v)
-				end
-				DescendantAddedConnection = game.DescendantAdded:Connect(HandleUsernameChange)
-				HandleConnection(DescendantAddedConnection, "HideName")
-			elseif DescendantAddedConnection then
-				DescendantAddedConnection:Disconnect()
-				DescendantAddedConnection = nil
-				for Object: TextLabel?, Text in OriginalText do
-					Object.Text = Text
-				end
-				OriginalText = {}
+-- Window --------------------------------------------------------------------
+
+local TabClass = {}
+TabClass.__index = TabClass
+
+function TabClass:CreateSection(Name)
+	self._tab:AddSection(Name)
+end
+
+function TabClass:CreateLabel(Text)
+	local Element = self._tab:AddParagraph({Title = Text, Content = ""})
+
+	return {
+		Set = function(_, NewText)
+			if Element.SetTitle then
+				Element:SetTitle(NewText)
 			end
 		end,
-	})
-
-	Tab:CreateInput({
-		Name = "💬 • Name To Replace With",
-		CurrentValue = "VMS HUB",
-		PlaceholderText = "New Name Here",
-		RemoveTextAfterFocusLost = false,
-		Flag = "NameReplacement",
-		Callback = function() end,
-	})
-
-	Tab:CreateSection("UI")
-
-	local CustomThemes = {
-		Default = "DarkBlue",
-		Dark = "Default"
 	}
+end
 
-	Tab:CreateDropdown({
-		Name = "🖼 • Change Theme",
-		Options = {"Default", "Dark", "AmberGlow", "Amethyst", "Ocean", "Light", "Bloom", "Green", "Serenity"},
-		MultipleOptions = false,
-		Flag = "Theme",
-		Callback = function(CurrentOption)
-			CurrentOption = CurrentOption[1]
-			if CurrentOption == "" then return end
-			Window.ModifyTheme(CustomThemes[CurrentOption] or CurrentOption)
-		end,
+function TabClass:CreateParagraph(Options)
+	return self._tab:AddParagraph({
+		Title = Options.Title or "",
+		Content = Options.Content or "",
 	})
+end
 
-	Tab:CreateSection("Development")
-
-	Tab:CreateButton({
-		Name = "⚙️ • Rejoin",
+function TabClass:CreateButton(Options)
+	self._tab:AddButton({
+		Title = Options.Name,
+		Description = Options.Description,
 		Callback = function()
-			TeleportService:Teleport(game.PlaceId, Player, {FrostByteRejoin = true})
+			SafeCall(Options.Callback)
 		end,
 	})
+end
 
-	Rayfield:LoadConfiguration()
+function TabClass:CreateToggle(Options)
+	local Entry = {Type = "Toggle", CurrentValue = Options.CurrentValue or false, Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
 
-	local OriginalFlags = getgenv().OriginalFlags
-	if OriginalFlags then
-		for Name: string, Flag in Flags do
-			local Value = OriginalFlags[Name]
-			if Value == nil then continue end
-			Flag:Set(Value)
+	local Element = self._tab:AddToggle(Flag, {
+		Title = Options.Name,
+		Description = Options.Description,
+		Default = Entry.CurrentValue,
+	})
+
+	Element:OnChanged(function(Value)
+		Entry.CurrentValue = Value
+		QueueSave()
+
+		if not Suppress then
+			task.spawn(SafeCall, Options.Callback, Value)
+		end
+	end)
+
+	function Entry:Set(Value)
+		Element:SetValue(Value)
+	end
+
+	return Entry
+end
+
+function TabClass:CreateSlider(Options)
+	local Range = Options.Range or {0, 100}
+	local Increment = Options.Increment or 1
+	local Rounding = if Increment >= 1 then 0 else math.max(0, math.ceil(-math.log10(Increment)))
+
+	local Entry = {Type = "Slider", CurrentValue = Options.CurrentValue or Range[1], Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
+
+	local Element = self._tab:AddSlider(Flag, {
+		Title = Options.Name,
+		Description = Options.Suffix and `Unit: {Options.Suffix}` or Options.Description,
+		Default = Entry.CurrentValue,
+		Min = Range[1],
+		Max = Range[2],
+		Rounding = Rounding,
+	})
+
+	Element:OnChanged(function(Value)
+		Entry.CurrentValue = Value
+		QueueSave()
+
+		if not Suppress then
+			task.spawn(SafeCall, Options.Callback, Value)
+		end
+	end)
+
+	function Entry:Set(Value)
+		Element:SetValue(Value)
+	end
+
+	return Entry
+end
+
+function TabClass:CreateInput(Options)
+	local Entry = {Type = "Input", CurrentValue = Options.CurrentValue or "", Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
+
+	local Element = self._tab:AddInput(Flag, {
+		Title = Options.Name,
+		Description = Options.Description,
+		Default = Entry.CurrentValue,
+		Placeholder = Options.PlaceholderText or "",
+		Numeric = false,
+		Finished = false,
+	})
+
+	Element:OnChanged(function(Value)
+		Entry.CurrentValue = Value
+		QueueSave()
+
+		if not Suppress then
+			task.spawn(SafeCall, Options.Callback, Value)
+		end
+	end)
+
+	function Entry:Set(Value)
+		Element:SetValue(Value)
+	end
+
+	return Entry
+end
+
+function TabClass:CreateDropdown(Options)
+	local Multi = Options.MultipleOptions or false
+	local Values = Options.Options or {}
+
+	local Initial = Options.CurrentOption
+	if typeof(Initial) == "string" then
+		Initial = {Initial}
+	end
+	Initial = Initial or {}
+
+	local Entry = {Type = "Dropdown", CurrentOption = Initial, Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
+
+	local Default
+	if Multi then
+		Default = {}
+		for _, Name in Initial do
+			Default[Name] = true
+		end
+	else
+		Default = table.find(Values, Initial[1])
+	end
+
+	local Element = self._tab:AddDropdown(Flag, {
+		Title = Options.Name,
+		Description = Options.Description,
+		Values = Values,
+		Multi = Multi,
+		Default = Default,
+	})
+
+	Element:OnChanged(function(Value)
+		local List = {}
+
+		if Multi then
+			for Name, Enabled in Value do
+				if Enabled then
+					table.insert(List, Name)
+				end
+			end
+		elseif Value then
+			List = {Value}
+		end
+
+		Entry.CurrentOption = List
+		QueueSave()
+
+		if not Suppress then
+			task.spawn(SafeCall, Options.Callback, List)
+		end
+	end)
+
+	function Entry:Set(NewOptions)
+		if typeof(NewOptions) == "string" then
+			NewOptions = {NewOptions}
+		end
+
+		if Multi then
+			local Map = {}
+			for _, Name in NewOptions do
+				Map[Name] = true
+			end
+			Element:SetValue(Map)
+		else
+			Element:SetValue(NewOptions[1])
 		end
 	end
 
-	Notify("Welcome to VMS HUB", `Loaded in {math.floor((tick() - StartLoadTime) * 10) / 10}s`, "loader-circle")
-
-	local FrostByteStarted = getgenv().FrostByteStarted
-	if FrostByteStarted then
-		FrostByteStarted()
+	function Entry:Refresh(NewValues)
+		Element:SetValues(NewValues)
 	end
+
+	return Entry
 end
 
-getgenv().CreateUniversalTabs = CreateUniversalTabs
-if not ScriptVersion or ScriptVersion == "Universal" then CreateUniversalTabs() end
+function TabClass:CreateKeybind(Options)
+	local Entry = {Type = "Keybind", CurrentKeybind = Options.CurrentKeybind or "E", Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
+
+	local Element = self._tab:AddKeybind(Flag, {
+		Title = Options.Name,
+		Description = Options.Description,
+		Mode = Options.HoldToInteract and "Hold" or "Toggle",
+		Default = Entry.CurrentKeybind,
+		Callback = function(Value)
+			if not Suppress then
+				task.spawn(SafeCall, Options.Callback, Value)
+			end
+		end,
+		ChangedCallback = function(New)
+			Entry.CurrentKeybind = tostring(New.Name or New)
+			QueueSave()
+		end,
+	})
+
+	function Entry:Set(Key)
+		Element:SetValue(Key, Options.HoldToInteract and "Hold" or "Toggle")
+	end
+
+	return Entry
+end
+
+function TabClass:CreateColorPicker(Options)
+	local Entry = {Type = "Color", CurrentValue = Options.Color or Color3.new(1, 1, 1), Callback = Options.Callback}
+	local Flag = NewFlag(Options.Flag, Entry)
+
+	local Element = self._tab:AddColorpicker(Flag, {
+		Title = Options.Name,
+		Description = Options.Description,
+		Default = Entry.CurrentValue,
+	})
+
+	Element:OnChanged(function(Value)
+		Entry.CurrentValue = Value
+		QueueSave()
+
+		if not Suppress then
+			task.spawn(SafeCall, Options.Callback, Value)
+		end
+	end)
+
+	function Entry:Set(Value)
+		if typeof(Value) == "string" then
+			Value = Color3.fromHex(Value)
+		end
+		Element:SetValue(Value)
+	end
+
+	return Entry
+end
+
+-- Rayfield used CreateColorPicker / CreateColorpicker inconsistently
+TabClass.CreateColorpicker = TabClass.CreateColorPicker
+
+local WindowClass = {}
+WindowClass.__index = WindowClass
+
+function WindowClass:CreateTab(Name, Icon)
+	local Tab
+
+	local Success = pcall(function()
+		Tab = self._fluent:AddTab({Title = Name, Icon = Icon or ""})
+	end)
+
+	if not Success or not Tab then
+		Tab = self._fluent:AddTab({Title = Name, Icon = ""})
+	end
+
+	self._first = true
+
+	return setmetatable({_tab = Tab}, TabClass)
+end
+
+function Rayfield:CreateWindow(Settings)
+	local FullName = tostring(Settings.Name or "Hub")
+	local Title, SubTitle = FullName:match("^(.-)%s*|%s*(.+)$")
+
+	local Saving = Settings.ConfigurationSaving
+	if Saving and Saving.Enabled then
+		SaveEnabled = true
+		SaveFolder = Saving.FolderName or SaveFolder
+		SaveName = Saving.FileName or SaveName
+	end
+
+	local FluentWindow = Fluent:CreateWindow({
+		Title = Title or FullName,
+		SubTitle = SubTitle or Settings.LoadingSubtitle or "",
+		TabWidth = 160,
+		Size = UDim2.fromOffset(580, 460),
+		Acrylic = false,
+		Theme = ThemeMap[Settings.Theme] or "Dark",
+		MinimizeKey = Enum.KeyCode.RightControl,
+	})
+
+	local Window = setmetatable({_fluent = FluentWindow}, WindowClass)
+
+	-- Works with both Window.ModifyTheme(x) and Window:ModifyTheme(x)
+	Window.ModifyTheme = function(A, B)
+		local Theme = if B ~= nil then B else A
+
+		if typeof(Theme) ~= "string" then
+			return
+		end
+
+		pcall(function()
+			Fluent:SetTheme(ThemeMap[Theme] or Theme)
+		end)
+	end
+
+	WindowObject = Window
+
+	return Window
+end
+
+local GetGenv = env.getgenv
+if GetGenv then
+	GetGenv().Rayfield = Rayfield
+end
+
+return Rayfield
