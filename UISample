@@ -322,7 +322,7 @@ end
 pcall(function()
 	Window = Rayfield:CreateWindow({
 		Name = `VMS HUB | {PlaceName} | {ScriptVersion or "Dev Mode"}`,
-		Icon = "snail",
+		Icon = 17288802854,
 		LoadingTitle = "🐌 Brought to you by VMS HUB 🐌",
 		LoadingSubtitle = PlaceName,
 		Theme = "Cobalt",
@@ -373,7 +373,7 @@ function CreateUniversalTabs()
 	
 	local Tab = Window:CreateTab({
 		Name = "Client",
-		Icon = "user"
+		Icon = 13451653612
 	})
 
 	Tab:CreateSection({ Name = "Discord" })
